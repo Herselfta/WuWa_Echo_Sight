@@ -10,13 +10,13 @@ type TabKey = "echoPool" | "record" | "distribution" | "analysis";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "echoPool", label: "声骸池" },
-  { key: "record", label: "快速录入" },
+  { key: "record", label: "录入工作台" },
   { key: "distribution", label: "实时分布" },
   { key: "analysis", label: "分析修正" },
 ];
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabKey>("echoPool");
+  const [activeTab, setActiveTab] = useState<TabKey>("record");
   const { loading, error, loadBootData } = useAppStore();
 
   useEffect(() => {

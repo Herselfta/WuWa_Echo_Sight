@@ -7,7 +7,8 @@ use uuid::Uuid;
 use crate::db::{get_tier_value, now_rfc3339, open_connection, AppState};
 use crate::domain::types::{
     BackfillSlotInput, CreateEchoInput, CreateEchoOutput, EchoFilter, EchoSubstatSlot, EchoSummary,
-    ExpectationItem, SetExpectationsInput, SimpleOk, StatDef, StatTier, UpdateEchoInput,
+    DeleteExpectationPresetInput, ExpectationItem, ExpectationPreset, SaveExpectationPresetInput,
+    SaveExpectationPresetOutput, SetExpectationsInput, SimpleOk, StatDef, StatTier, UpdateEchoInput,
     UpsertBackfillInput,
 };
 
@@ -23,6 +24,19 @@ fn ensure_cost_class(cost_class: i64) -> Result<(), String> {
         1 | 3 | 4 => Ok(()),
         _ => Err(format!("invalid cost_class: {cost_class}")),
     }
+}
+
+fn ensure_expectation_items(items: &[ExpectationItem]) -> Result<(), String> {
+    let mut stat_set = HashSet::new();
+    for item in items {
+        if item.rank < 1 {
+            return Err(format!("rank must be >= 1, got {}", item.rank));
+        }
+        if !stat_set.insert(item.stat_key.clone()) {
+            return Err(format!("duplicate stat_key in expectation items: {}", item.stat_key));
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -279,6 +293,7 @@ pub fn set_expectations(
     state: State<'_, AppState>,
     input: SetExpectationsInput,
 ) -> Result<SimpleOk, String> {
+    ensure_expectation_items(&input.items)?;
     let mut conn = open_connection(&state)?;
     let tx = conn
         .transaction()
@@ -413,5 +428,153 @@ pub fn upsert_backfill_state(
     tx.commit()
         .map_err(|e| format!("failed to commit backfill: {e}"))?;
 
+    Ok(SimpleOk { ok: true })
+}
+
+#[tauri::command]
+pub fn list_expectation_presets(state: State<'_, AppState>) -> Result<Vec<ExpectationPreset>, String> {
+    let conn = open_connection(&state)?;
+    let mut preset_stmt = conn
+        .prepare(
+            "SELECT preset_id, name, created_at, updated_at
+             FROM expectation_presets
+             ORDER BY updated_at DESC, created_at DESC",
+        )
+        .map_err(|e| format!("failed to prepare preset query: {e}"))?;
+    let preset_rows = preset_stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| format!("failed to query preset rows: {e}"))?;
+
+    let mut item_stmt = conn
+        .prepare(
+            "SELECT stat_key, rank
+             FROM expectation_preset_items
+             WHERE preset_id = ?1
+             ORDER BY rank ASC, stat_key ASC",
+        )
+        .map_err(|e| format!("failed to prepare preset items query: {e}"))?;
+
+    let mut presets = Vec::new();
+    for row in preset_rows {
+        let (preset_id, name, created_at, updated_at) =
+            row.map_err(|e| format!("failed to read preset row: {e}"))?;
+        let items = item_stmt
+            .query_map([&preset_id], |r| {
+                Ok(ExpectationItem {
+                    stat_key: r.get(0)?,
+                    rank: r.get(1)?,
+                })
+            })
+            .map_err(|e| format!("failed to query preset items: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("failed to collect preset items: {e}"))?;
+        presets.push(ExpectationPreset {
+            preset_id,
+            name,
+            created_at,
+            updated_at,
+            items,
+        });
+    }
+    Ok(presets)
+}
+
+#[tauri::command]
+pub fn save_expectation_preset(
+    state: State<'_, AppState>,
+    input: SaveExpectationPresetInput,
+) -> Result<SaveExpectationPresetOutput, String> {
+    ensure_expectation_items(&input.items)?;
+    let name = input.name.trim().to_string();
+    if name.is_empty() {
+        return Err("preset name cannot be empty".to_string());
+    }
+
+    let mut conn = open_connection(&state)?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("failed to start preset transaction: {e}"))?;
+    let now = now_rfc3339();
+
+    let preset_id = match input.preset_id {
+        Some(preset_id) => {
+            let exists: Option<String> = tx
+                .query_row(
+                    "SELECT preset_id FROM expectation_presets WHERE preset_id = ?1",
+                    [&preset_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| format!("failed to check existing preset: {e}"))?;
+            if exists.is_some() {
+                tx.execute(
+                    "UPDATE expectation_presets
+                     SET name = ?2, updated_at = ?3
+                     WHERE preset_id = ?1",
+                    params![preset_id, name, now],
+                )
+                .map_err(|e| format!("failed to update preset: {e}"))?;
+                preset_id
+            } else {
+                tx.execute(
+                    "INSERT INTO expectation_presets(preset_id, name, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?3)",
+                    params![preset_id, name, now],
+                )
+                .map_err(|e| format!("failed to create preset: {e}"))?;
+                preset_id
+            }
+        }
+        None => {
+            let preset_id = Uuid::new_v4().to_string();
+            tx.execute(
+                "INSERT INTO expectation_presets(preset_id, name, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?3)",
+                params![preset_id, name, now],
+            )
+            .map_err(|e| format!("failed to create preset: {e}"))?;
+            preset_id
+        }
+    };
+
+    tx.execute(
+        "DELETE FROM expectation_preset_items WHERE preset_id = ?1",
+        [&preset_id],
+    )
+    .map_err(|e| format!("failed to clear preset items: {e}"))?;
+
+    for item in input.items {
+        tx.execute(
+            "INSERT INTO expectation_preset_items(preset_id, stat_key, rank)
+             VALUES (?1, ?2, ?3)",
+            params![preset_id, item.stat_key, item.rank],
+        )
+        .map_err(|e| format!("failed to insert preset item: {e}"))?;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit preset save: {e}"))?;
+
+    Ok(SaveExpectationPresetOutput { preset_id })
+}
+
+#[tauri::command]
+pub fn delete_expectation_preset(
+    state: State<'_, AppState>,
+    input: DeleteExpectationPresetInput,
+) -> Result<SimpleOk, String> {
+    let conn = open_connection(&state)?;
+    conn.execute(
+        "DELETE FROM expectation_presets WHERE preset_id = ?1",
+        [&input.preset_id],
+    )
+    .map_err(|e| format!("failed to delete preset: {e}"))?;
     Ok(SimpleOk { ok: true })
 }

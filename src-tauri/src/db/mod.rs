@@ -18,8 +18,15 @@ pub fn init_database(db_path: &Path) -> Result<(), String> {
     }
 
     let conn = Connection::open(db_path).map_err(|e| format!("failed to open db: {e}"))?;
-    conn.execute_batch(include_str!("migrations/001_init.sql"))
-        .map_err(|e| format!("failed to run migrations: {e}"))?;
+    let migrations = [
+        include_str!("migrations/001_init.sql"),
+        include_str!("migrations/002_expectation_presets.sql"),
+    ];
+
+    for (idx, migration_sql) in migrations.iter().enumerate() {
+        conn.execute_batch(migration_sql)
+            .map_err(|e| format!("failed to run migration {}: {e}", idx + 1))?;
+    }
     Ok(())
 }
 

@@ -3,6 +3,7 @@ import {
   getEchoesForStat,
   getGlobalDistribution,
   listEchoes,
+  listExpectationPresets,
   listStatDefs,
 } from "../api/tauri";
 import type {
@@ -10,12 +11,14 @@ import type {
   DistributionPayload,
   EchoProbRow,
   EchoSummary,
+  ExpectationPreset,
   StatDef,
 } from "../types/domain";
 
 interface AppState {
   statDefs: StatDef[];
   echoes: EchoSummary[];
+  expectationPresets: ExpectationPreset[];
   distribution: DistributionPayload | null;
   selectedStatKey: string | null;
   echoProbRows: EchoProbRow[];
@@ -28,11 +31,13 @@ interface AppState {
   refreshEchoes: () => Promise<void>;
   refreshDistribution: () => Promise<void>;
   refreshEchoProbRows: (sortBy?: string) => Promise<void>;
+  refreshExpectationPresets: () => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
   statDefs: [],
   echoes: [],
+  expectationPresets: [],
   distribution: null,
   selectedStatKey: null,
   echoProbRows: [],
@@ -51,15 +56,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadBootData: async () => {
     set({ loading: true, error: null });
     try {
-      const [statDefs, echoes, distribution] = await Promise.all([
+      const [statDefs, echoes, distribution, expectationPresets] = await Promise.all([
         listStatDefs(),
         listEchoes(),
         getGlobalDistribution({}),
+        listExpectationPresets(),
       ]);
       set({
         statDefs,
         echoes,
         distribution,
+        expectationPresets,
       });
     } catch (error) {
       set({ error: String(error) });
@@ -97,6 +104,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...get().distributionFilter,
       });
       set({ echoProbRows: rows, error: null });
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+  refreshExpectationPresets: async () => {
+    try {
+      const expectationPresets = await listExpectationPresets();
+      set({ expectationPresets, error: null });
     } catch (error) {
       set({ error: String(error) });
     }

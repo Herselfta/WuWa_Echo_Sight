@@ -25,6 +25,36 @@ pub struct ExpectationItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExpectationPreset {
+    pub preset_id: String,
+    pub name: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub items: Vec<ExpectationItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveExpectationPresetInput {
+    pub preset_id: Option<String>,
+    pub name: String,
+    pub items: Vec<ExpectationItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveExpectationPresetOutput {
+    pub preset_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteExpectationPresetInput {
+    pub preset_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EchoSubstatSlot {
     pub slot_no: i64,
     pub stat_key: String,

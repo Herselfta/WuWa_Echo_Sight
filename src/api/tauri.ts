@@ -4,6 +4,7 @@ import type {
   DistributionPayload,
   EchoProbRow,
   EchoSummary,
+  ExpectationPreset,
   EventRow,
   ExpectationItem,
   StatDef,
@@ -42,6 +43,22 @@ export async function listEchoes(filter?: {
 
 export async function setExpectations(echoId: string, items: ExpectationItem[]): Promise<{ ok: boolean }> {
   return invoke("set_expectations", { input: { echoId, items } });
+}
+
+export async function listExpectationPresets(): Promise<ExpectationPreset[]> {
+  return invoke("list_expectation_presets");
+}
+
+export async function saveExpectationPreset(input: {
+  presetId?: string;
+  name: string;
+  items: ExpectationItem[];
+}): Promise<{ presetId: string }> {
+  return invoke("save_expectation_preset", { input });
+}
+
+export async function deleteExpectationPreset(presetId: string): Promise<{ ok: boolean }> {
+  return invoke("delete_expectation_preset", { input: { presetId } });
 }
 
 export async function upsertBackfillState(input: {

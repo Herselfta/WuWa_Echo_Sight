@@ -7,7 +7,8 @@ use tauri::Manager;
 
 use commands::analysis::{create_probability_snapshot, get_echoes_for_stat, get_global_distribution};
 use commands::echo::{
-    create_echo, list_echoes, list_stat_defs, set_expectations, update_echo, upsert_backfill_state,
+    create_echo, delete_expectation_preset, list_echoes, list_expectation_presets, list_stat_defs,
+    save_expectation_preset, set_expectations, update_echo, upsert_backfill_state,
 };
 use commands::event::{append_ordered_event, edit_ordered_event, get_event_history};
 use commands::export::export_csv;
@@ -37,6 +38,9 @@ pub fn run() {
             update_echo,
             list_echoes,
             set_expectations,
+            list_expectation_presets,
+            save_expectation_preset,
+            delete_expectation_preset,
             upsert_backfill_state,
             append_ordered_event,
             edit_ordered_event,

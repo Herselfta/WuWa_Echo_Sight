@@ -17,6 +17,14 @@ export interface ExpectationItem {
   rank: number;
 }
 
+export interface ExpectationPreset {
+  presetId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  items: ExpectationItem[];
+}
+
 export interface EchoSubstatSlot {
   slotNo: number;
   statKey: string;

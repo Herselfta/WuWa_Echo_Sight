@@ -116,6 +116,8 @@ pub fn export_csv(
         ("echoes.csv", "echoes"),
         ("echo_current_substats.csv", "echo_current_substats"),
         ("echo_expectations.csv", "echo_expectations"),
+        ("expectation_presets.csv", "expectation_presets"),
+        ("expectation_preset_items.csv", "expectation_preset_items"),
     ];
 
     for (filename, table) in files {
