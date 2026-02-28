@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteEcho,
   deleteExpectationPreset,
@@ -12,6 +12,7 @@ import type { EchoStatus, ExpectationItem, ExpectationPreset } from "../types/do
 
 type RelOp = "gt" | "eq";
 type ToastKind = "info" | "success" | "error";
+type DragKind = "expectation" | "slot" | "preset";
 
 interface SlotDraft {
   statKey: string;
@@ -23,6 +24,27 @@ interface BasicDraft {
   mainStatKey: string;
   costClass: number;
   status: EchoStatus;
+}
+
+interface DragState {
+  kind: DragKind;
+  fromIndex: number;
+  dropIndex: number;
+  pointerId: number;
+  x: number;
+  y: number;
+  label: string;
+}
+
+type PresetDraftSource = Pick<ExpectationPreset, "presetId" | "name" | "items">;
+
+function buildDefaultPresetName(date = new Date()) {
+  return `新预设 ${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(
+    date.getDate(),
+  ).padStart(2, "0")}-${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(
+    2,
+    "0",
+  )}${String(date.getSeconds()).padStart(2, "0")}`;
 }
 
 const STAT_ABBR_MAP: Record<string, string> = {
@@ -71,14 +93,72 @@ function chainToExpectationItems(stats: string[], ops: RelOp[]): ExpectationItem
   return result;
 }
 
-function moveArrayItem<T>(arr: T[], from: number, to: number): T[] {
-  if (from === to || from < 0 || to < 0 || from >= arr.length || to >= arr.length) {
+function moveArrayToInsertion<T>(arr: T[], from: number, insertionIndex: number): T[] {
+  if (from < 0 || from >= arr.length) {
     return arr;
   }
   const next = [...arr];
   const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
+  const clampedIndex = Math.max(0, Math.min(insertionIndex, next.length));
+  next.splice(clampedIndex, 0, item);
   return next;
+}
+
+function remapIndexAfterInsertion(
+  index: number | null,
+  length: number,
+  from: number,
+  insertionIndex: number,
+): number | null {
+  if (index === null) {
+    return null;
+  }
+  const remapped = moveArrayToInsertion(
+    Array.from({ length }, (_, i) => i),
+    from,
+    insertionIndex,
+  );
+  return remapped.indexOf(index);
+}
+
+function computeInsertionIndex(
+  kind: DragKind,
+  fromIndex: number,
+  clientX: number,
+): number {
+  const hosts = Array.from(document.querySelectorAll<HTMLElement>(`[data-drag-kind="${kind}"][data-drag-index]`))
+    .map((host) => ({
+      host,
+      index: Number(host.dataset.dragIndex),
+    }))
+    .filter((item) => Number.isInteger(item.index) && item.index !== fromIndex)
+    .sort((a, b) => a.index - b.index);
+
+  if (hosts.length === 0) {
+    return 0;
+  }
+
+  const beforeIndex = hosts.findIndex(({ host }) => {
+    const rect = host.getBoundingClientRect();
+    return clientX < rect.left + rect.width / 2;
+  });
+
+  return beforeIndex === -1 ? hosts.length : beforeIndex;
+}
+
+function resolveInsertBeforeIndex(
+  length: number,
+  fromIndex: number,
+  insertionIndex: number,
+): number | null {
+  const visible = Array.from({ length }, (_, i) => i).filter((idx) => idx !== fromIndex);
+  if (insertionIndex < 0) {
+    return visible[0] ?? null;
+  }
+  if (insertionIndex >= visible.length) {
+    return null;
+  }
+  return visible[insertionIndex];
 }
 
 function formatScaledValue(unit: string, valueScaled: number) {
@@ -88,6 +168,14 @@ function formatScaledValue(unit: string, valueScaled: number) {
 export function EchoPoolPage() {
   const { statDefs, echoes, expectationPresets, refreshEchoes, refreshExpectationPresets } = useAppStore();
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  const presetSelectorRef = useRef<HTMLDivElement | null>(null);
+  const presetSelectorButtonRef = useRef<HTMLButtonElement | null>(null);
+  const presetSelectorMenuRef = useRef<HTMLDivElement | null>(null);
+  const presetNamingPopRef = useRef<HTMLFormElement | null>(null);
+  const presetNamingInputRef = useRef<HTMLInputElement | null>(null);
+  const expectationRowRef = useRef<HTMLDivElement | null>(null);
+  const slotRowRef = useRef<HTMLDivElement | null>(null);
+  const presetRowRef = useRef<HTMLDivElement | null>(null);
   const [tableClientWidth, setTableClientWidth] = useState(0);
   const statMap = useMemo(() => new Map(statDefs.map((x) => [x.statKey, x])), [statDefs]);
   const formatTierLabel = (statKey: string, tierIndex: number) => {
@@ -100,14 +188,6 @@ export function EchoPoolPage() {
       .sort((a, b) => a.rank - b.rank || a.statKey.localeCompare(b.statKey))
       .map((item) => `${statMap.get(item.statKey)?.displayName ?? item.statKey}(r${item.rank})`)
       .join(" / ");
-  const getDragIndex = (event: DragEvent<HTMLElement>) => {
-    const raw = event.dataTransfer.getData("text/plain");
-    if (!raw) {
-      return null;
-    }
-    const parsed = Number(raw);
-    return Number.isInteger(parsed) ? parsed : null;
-  };
 
   const [editingEchoId, setEditingEchoId] = useState<string | null>(null);
   const [basicDraft, setBasicDraft] = useState<BasicDraft | null>(null);
@@ -116,15 +196,36 @@ export function EchoPoolPage() {
   const [slotsDraft, setSlotsDraft] = useState<SlotDraft[]>([]);
   const [activeExpectationIndex, setActiveExpectationIndex] = useState<number | null>(null);
   const [activeSlotIndex, setActiveSlotIndex] = useState<number | null>(null);
-  const [dragExpectationIndex, setDragExpectationIndex] = useState<number | null>(null);
-  const [dragSlotIndex, setDragSlotIndex] = useState<number | null>(null);
+  const [activePresetIndex, setActivePresetIndex] = useState<number | null>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
   const [pendingDeleteEchoId, setPendingDeleteEchoId] = useState<string | null>(null);
   const [pendingDeletePresetId, setPendingDeletePresetId] = useState<string | null>(null);
-  const [presetName, setPresetName] = useState("");
-  const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
+  const [presetSelectorOpen, setPresetSelectorOpen] = useState(false);
+  const [presetNamingOpen, setPresetNamingOpen] = useState(false);
+  const [presetNamingValue, setPresetNamingValue] = useState("");
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [presetPopoverPos, setPresetPopoverPos] = useState({ left: 8, top: 8, width: 240 });
+  const [presetManagerExpanded, setPresetManagerExpanded] = useState(false);
+  const [presetDraftId, setPresetDraftId] = useState<string | null>(null);
+  const [presetDraftName, setPresetDraftName] = useState("");
+  const [presetDraftStats, setPresetDraftStats] = useState<string[]>([]);
+  const [presetDraftOps, setPresetDraftOps] = useState<RelOp[]>([]);
 
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string; kind: ToastKind } | null>(null);
+  const dragStateRef = useRef<DragState | null>(null);
+  const syncPresetPopoverPosition = () => {
+    const trigger = presetSelectorButtonRef.current;
+    if (!trigger) {
+      return;
+    }
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.max(220, Math.min(360, Math.max(rect.width, 220)));
+    const maxLeft = Math.max(8, window.innerWidth - width - 8);
+    const left = Math.min(maxLeft, Math.max(8, rect.left));
+    const top = Math.max(8, Math.min(window.innerHeight - 8, rect.bottom + 4));
+    setPresetPopoverPos({ left, top, width });
+  };
   const setMessage = (text: string, kind: ToastKind = "info") => {
     if (!text.trim()) {
       setToast(null);
@@ -159,6 +260,176 @@ export function EchoPoolPage() {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    dragStateRef.current = dragState;
+  }, [dragState]);
+
+  useEffect(() => {
+    document.body.classList.toggle("is-dragging-chain", dragState !== null);
+    return () => document.body.classList.remove("is-dragging-chain");
+  }, [dragState]);
+
+  useEffect(() => {
+    if (!presetSelectorOpen && !presetNamingOpen) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      const inTrigger = presetSelectorRef.current?.contains(target) ?? false;
+      const inMenu = presetSelectorMenuRef.current?.contains(target) ?? false;
+      const inNaming = presetNamingPopRef.current?.contains(target) ?? false;
+      if (!inTrigger && !inMenu && !inNaming) {
+        setPresetSelectorOpen(false);
+        setPresetNamingOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [presetSelectorOpen, presetNamingOpen]);
+
+  useEffect(() => {
+    if (!presetSelectorOpen && !presetNamingOpen) {
+      return;
+    }
+    const updatePosition = () => syncPresetPopoverPosition();
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [presetSelectorOpen, presetNamingOpen]);
+
+  useEffect(() => {
+    if (!presetNamingOpen) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const input = presetNamingInputRef.current;
+      if (!input) {
+        return;
+      }
+      input.focus();
+      input.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [presetNamingOpen]);
+
+  useEffect(() => {
+    if (!selectedPresetId) {
+      return;
+    }
+    if (!expectationPresets.some((preset) => preset.presetId === selectedPresetId)) {
+      setSelectedPresetId(null);
+    }
+  }, [expectationPresets, selectedPresetId]);
+
+  useEffect(() => {
+    if (!dragState) {
+      return;
+    }
+
+    const finishDragging = (apply: boolean) => {
+      const current = dragStateRef.current;
+      if (!current) {
+        setDragState(null);
+        return;
+      }
+
+      if (apply) {
+        if (current.kind === "expectation") {
+          setExpectationStats((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
+          setActiveExpectationIndex((prev) =>
+            remapIndexAfterInsertion(prev, expectationStats.length, current.fromIndex, current.dropIndex),
+          );
+        } else if (current.kind === "slot") {
+          setSlotsDraft((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
+          setActiveSlotIndex((prev) =>
+            remapIndexAfterInsertion(prev, slotsDraft.length, current.fromIndex, current.dropIndex),
+          );
+        } else {
+          setPresetDraftStats((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
+          setActivePresetIndex((prev) =>
+            remapIndexAfterInsertion(prev, presetDraftStats.length, current.fromIndex, current.dropIndex),
+          );
+        }
+      }
+
+      setDragState(null);
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const current = dragStateRef.current;
+      if (!current || current.pointerId !== event.pointerId) {
+        return;
+      }
+
+      if (event.buttons === 0) {
+        finishDragging(true);
+        return;
+      }
+
+      const row =
+        current.kind === "expectation"
+          ? expectationRowRef.current
+          : current.kind === "slot"
+            ? slotRowRef.current
+            : presetRowRef.current;
+      let nextDropIndex = current.dropIndex;
+      if (row) {
+        const rect = row.getBoundingClientRect();
+        const nearRow =
+          event.clientY >= rect.top - 28 &&
+          event.clientY <= rect.bottom + 28 &&
+          event.clientX >= rect.left - 80 &&
+          event.clientX <= rect.right + 80;
+        if (nearRow) {
+          const edgeThreshold = 26;
+          if (event.clientX < rect.left + edgeThreshold) {
+            row.scrollLeft = Math.max(0, row.scrollLeft - 18);
+          } else if (event.clientX > rect.right - edgeThreshold) {
+            row.scrollLeft += 18;
+          }
+          nextDropIndex = computeInsertionIndex(current.kind, current.fromIndex, event.clientX);
+        }
+      }
+
+      setDragState((prev) =>
+        prev && prev.pointerId === event.pointerId
+          ? {
+              ...prev,
+              x: event.clientX,
+              y: event.clientY,
+              dropIndex: nextDropIndex,
+            }
+          : prev,
+      );
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const current = dragStateRef.current;
+      if (!current || current.pointerId !== event.pointerId) {
+        return;
+      }
+      finishDragging(true);
+    };
+
+    const handleBlur = () => finishDragging(false);
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [dragState?.pointerId, expectationStats.length, slotsDraft.length, presetDraftStats.length]);
 
   const columnWidths = useMemo(() => {
     const total = Math.max(tableClientWidth, 1);
@@ -204,6 +475,25 @@ export function EchoPoolPage() {
     () => new Set(editingOrderedSlots.map((x) => x.statKey)),
     [editingOrderedSlots],
   );
+  const draggingExpectationFromIndex = dragState?.kind === "expectation" ? dragState.fromIndex : null;
+  const draggingSlotFromIndex = dragState?.kind === "slot" ? dragState.fromIndex : null;
+  const draggingPresetFromIndex = dragState?.kind === "preset" ? dragState.fromIndex : null;
+  const expectationInsertBeforeIndex =
+    dragState?.kind === "expectation"
+      ? resolveInsertBeforeIndex(expectationStats.length, dragState.fromIndex, dragState.dropIndex)
+      : null;
+  const slotInsertBeforeIndex =
+    dragState?.kind === "slot"
+      ? resolveInsertBeforeIndex(slotsDraft.length, dragState.fromIndex, dragState.dropIndex)
+      : null;
+  const presetInsertBeforeIndex =
+    dragState?.kind === "preset"
+      ? resolveInsertBeforeIndex(presetDraftStats.length, dragState.fromIndex, dragState.dropIndex)
+      : null;
+  const selectedPresetName = useMemo(
+    () => expectationPresets.find((preset) => preset.presetId === selectedPresetId)?.name ?? "未选择",
+    [expectationPresets, selectedPresetId],
+  );
 
   const startEdit = (echoId: string) => {
     const echo = echoes.find((x) => x.echoId === echoId);
@@ -229,9 +519,18 @@ export function EchoPoolPage() {
     );
     setActiveExpectationIndex(null);
     setActiveSlotIndex(null);
-    setDragExpectationIndex(null);
-    setDragSlotIndex(null);
+    setActivePresetIndex(null);
+    setDragState(null);
     setPendingDeleteEchoId(null);
+    setPendingDeletePresetId(null);
+    setPresetSelectorOpen(false);
+    setPresetNamingOpen(false);
+    setPresetNamingValue("");
+    setSelectedPresetId(null);
+    setPresetDraftId(null);
+    setPresetDraftName("");
+    setPresetDraftStats([]);
+    setPresetDraftOps([]);
     setMessage("");
   };
 
@@ -243,9 +542,18 @@ export function EchoPoolPage() {
     setSlotsDraft([]);
     setActiveExpectationIndex(null);
     setActiveSlotIndex(null);
-    setDragExpectationIndex(null);
-    setDragSlotIndex(null);
+    setActivePresetIndex(null);
+    setDragState(null);
     setPendingDeleteEchoId(null);
+    setPendingDeletePresetId(null);
+    setPresetSelectorOpen(false);
+    setPresetNamingOpen(false);
+    setPresetNamingValue("");
+    setSelectedPresetId(null);
+    setPresetDraftId(null);
+    setPresetDraftName("");
+    setPresetDraftStats([]);
+    setPresetDraftOps([]);
   };
 
   const pickAvailableStat = (used: string[]) => {
@@ -413,47 +721,72 @@ export function EchoPoolPage() {
     }
   };
 
-  const loadPresetToEditor = (preset: ExpectationPreset) => {
+  const usePresetToCurrentEditor = (preset: ExpectationPreset) => {
     if (!editingEcho) {
-      setMessage("请先点击某条声骸的“管理”，再载入预设。");
+      setMessage("请先点击某条声骸的“管理”，再使用预设。");
       return;
     }
     const chain = buildExpectationChain(preset.items);
-    setEditingPresetId(preset.presetId);
-    setPresetName(preset.name);
     setExpectationStats(chain.stats);
     setExpectationOps(chain.ops);
     setActiveExpectationIndex(null);
-    setMessage(`预设「${preset.name}」已载入编辑区。`);
+    setSelectedPresetId(preset.presetId);
+    setPresetSelectorOpen(false);
+    setMessage(`已载入预设「${preset.name}」。`);
   };
 
-  const savePresetFromCurrent = async () => {
+  const openPresetEditor = (preset: PresetDraftSource) => {
+    const chain = buildExpectationChain(preset.items);
+    setPresetDraftId(preset.presetId);
+    setPresetDraftName(preset.name);
+    setPresetDraftStats(chain.stats);
+    setPresetDraftOps(chain.ops);
+    setActivePresetIndex(null);
+    setPendingDeletePresetId(null);
+    setPresetManagerExpanded(true);
+  };
+
+  const openCreatePresetNaming = () => {
     if (!editingEcho) {
-      setMessage("请先点击某条声骸的“管理”，再保存预设。");
+      setMessage("请先点击某条声骸的“管理”，再设为预设。");
+      return;
+    }
+    setPresetSelectorOpen(false);
+    setPresetNamingValue(buildDefaultPresetName());
+    setPresetNamingOpen(true);
+    window.requestAnimationFrame(() => syncPresetPopoverPosition());
+  };
+
+  const createPresetFromCurrent = async () => {
+    if (!editingEcho) {
+      setMessage("请先点击某条声骸的“管理”，再设为预设。");
+      return;
+    }
+    const uniqueExpectationStats = Array.from(new Set(expectationStats));
+    if (uniqueExpectationStats.length !== expectationStats.length) {
+      setMessage("期望词条存在重复，请先调整。");
       return;
     }
     const items = chainToExpectationItems(expectationStats, expectationOps);
-    if (!presetName.trim()) {
-      setMessage("请填写预设名称。");
-      return;
-    }
     if (items.length === 0) {
       setMessage("当前没有可保存的期望词条。");
       return;
     }
 
+    const generatedName = presetNamingValue.trim() || buildDefaultPresetName();
+
     setSaving(true);
     setMessage("");
     try {
       const result = await saveExpectationPreset({
-        presetId: editingPresetId ?? undefined,
-        name: presetName.trim(),
+        name: generatedName,
         items,
       });
       await refreshExpectationPresets();
-      setEditingPresetId(result.presetId);
-      setPendingDeletePresetId(null);
-      setMessage("期望预设已保存。", "success");
+      setSelectedPresetId(result.presetId);
+      setPresetNamingOpen(false);
+      setPresetSelectorOpen(false);
+      setMessage(`已设为预设「${generatedName}」。`, "success");
     } catch (error) {
       setMessage(String(error), "error");
     } finally {
@@ -462,22 +795,85 @@ export function EchoPoolPage() {
     }
   };
 
-  const applyPresetToEditingEcho = async (preset: ExpectationPreset) => {
-    if (!editingEcho) {
-      setMessage("请先点击某条声骸的“管理”，再应用预设。");
+  const addPresetStat = () => {
+    setPresetDraftStats((prev) => {
+      const nextStat = pickAvailableStat(prev);
+      if (prev.includes(nextStat)) {
+        setMessage("没有可添加的预设词条。");
+        return prev;
+      }
+      if (prev.length > 0) {
+        setPresetDraftOps((ops) => [...ops, "gt"]);
+      }
+      setActivePresetIndex(prev.length);
+      return [...prev, nextStat];
+    });
+  };
+
+  const removePresetStatAt = (idx: number) => {
+    setPresetDraftStats((prevStats) => {
+      const next = prevStats.filter((_, i) => i !== idx);
+      setPresetDraftOps((prevOps) => {
+        if (prevStats.length <= 1) {
+          return [];
+        }
+        const ops = [...prevOps];
+        if (idx === 0) {
+          ops.shift();
+          return ops;
+        }
+        if (idx === prevStats.length - 1) {
+          ops.pop();
+          return ops;
+        }
+        ops[idx - 1] = "gt";
+        ops.splice(idx, 1);
+        return ops;
+      });
+      return next;
+    });
+    setActivePresetIndex((prev) => {
+      if (prev === null) {
+        return prev;
+      }
+      if (prev === idx) {
+        return null;
+      }
+      if (prev > idx) {
+        return prev - 1;
+      }
+      return prev;
+    });
+  };
+
+  const savePresetDraft = async () => {
+    const name = presetDraftName.trim();
+    if (!name) {
+      setMessage("请填写预设名称。");
       return;
     }
+    if (presetDraftStats.length === 0) {
+      setMessage("预设词条为空，无法保存。");
+      return;
+    }
+    const uniquePresetStats = Array.from(new Set(presetDraftStats));
+    if (uniquePresetStats.length !== presetDraftStats.length) {
+      setMessage("预设词条存在重复，请先调整。");
+      return;
+    }
+
     setSaving(true);
     setMessage("");
     try {
-      const chain = buildExpectationChain(preset.items);
-      setExpectationStats(chain.stats);
-      setExpectationOps(chain.ops);
-      setEditingPresetId(preset.presetId);
-      setPresetName(preset.name);
-      await setExpectations(editingEcho.echoId, preset.items);
-      await refreshEchoes();
-      setMessage(`预设「${preset.name}」已应用到当前声骸。`, "success");
+      const result = await saveExpectationPreset({
+        presetId: presetDraftId ?? undefined,
+        name,
+        items: chainToExpectationItems(presetDraftStats, presetDraftOps),
+      });
+      await refreshExpectationPresets();
+      setPresetDraftId(result.presetId);
+      setPendingDeletePresetId(null);
+      setMessage("预设已保存。", "success");
     } catch (error) {
       setMessage(String(error), "error");
     } finally {
@@ -498,9 +894,15 @@ export function EchoPoolPage() {
     try {
       await deleteExpectationPreset(presetId);
       await refreshExpectationPresets();
-      if (editingPresetId === presetId) {
-        setEditingPresetId(null);
-        setPresetName("");
+      if (presetDraftId === presetId) {
+        setPresetDraftId(null);
+        setPresetDraftName("");
+        setPresetDraftStats([]);
+        setPresetDraftOps([]);
+        setActivePresetIndex(null);
+      }
+      if (selectedPresetId === presetId) {
+        setSelectedPresetId(null);
       }
       setPendingDeletePresetId(null);
       setMessage("预设已删除。", "success");
@@ -511,6 +913,175 @@ export function EchoPoolPage() {
       setSaving(false);
     }
   };
+
+  const renderPresetManager = () => (
+    <div className="chain-block">
+      <span className="chain-label">预设列表</span>
+      {expectationPresets.length === 0 ? (
+        <p className="hint">暂无预设，可在声骸条目“预设”里设为预设。</p>
+      ) : (
+        <table className="table compact-table preset-table">
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>词条</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {expectationPresets.map((preset) => (
+              <tr key={preset.presetId}>
+                <td>{preset.name}</td>
+                <td>{formatPresetSummary(preset.items)}</td>
+                <td>
+                  <div className="inline-row">
+                    <button type="button" onClick={() => openPresetEditor(preset)} disabled={saving}>
+                      编辑
+                    </button>
+                    <button type="button" onClick={() => void removePreset(preset.presetId)} disabled={saving}>
+                      {pendingDeletePresetId === preset.presetId ? "确认删除预设" : "删除预设"}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {presetDraftId ? (
+        <div className="chain-block">
+          <span className="chain-label">预设管理</span>
+          <label>
+            名称
+            <input
+              value={presetDraftName}
+              onChange={(e) => setPresetDraftName(e.target.value)}
+              placeholder="预设名称"
+            />
+          </label>
+          <div className="chain-row" ref={presetRowRef}>
+            {presetDraftStats.length === 0 ? <span className="chain-empty">无</span> : null}
+            {presetDraftStats.map((statKey, idx) => {
+              if (draggingPresetFromIndex === idx) {
+                return null;
+              }
+              const stat = statMap.get(statKey);
+              const selected = activePresetIndex === idx;
+              const availableStats = statDefs.filter(
+                (x) => x.statKey === statKey || !presetDraftStats.includes(x.statKey),
+              );
+              const hideOperator =
+                draggingPresetFromIndex !== null &&
+                (idx === draggingPresetFromIndex || idx + 1 === draggingPresetFromIndex);
+
+              return (
+                <Fragment key={`preset-${idx}-${statKey}`}>
+                  {presetInsertBeforeIndex === idx ? <span className="drag-insert-line" aria-hidden="true" /> : null}
+                  <div className="chain-fragment">
+                    <div
+                      className={selected ? "chain-item active" : "chain-item"}
+                      data-drag-kind="preset"
+                      data-drag-index={idx}
+                      onClick={() => setActivePresetIndex(idx)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        removePresetStatAt(idx);
+                      }}
+                      title="单击编辑，右键删除"
+                    >
+                      <button
+                        type="button"
+                        className="drag-handle"
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setDragState({
+                            kind: "preset",
+                            fromIndex: idx,
+                            dropIndex: idx,
+                            pointerId: e.pointerId,
+                            x: e.clientX,
+                            y: e.clientY,
+                            label: stat?.displayName ?? statKey,
+                          });
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        title="按住拖动排序"
+                      >
+                        ::
+                      </button>
+                      {selected ? (
+                        <select
+                          value={statKey}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setPresetDraftStats((prev) =>
+                              prev.map((item, itemIdx) => (itemIdx === idx ? next : item)),
+                            );
+                          }}
+                        >
+                          {availableStats.map((s) => (
+                            <option key={s.statKey} value={s.statKey}>
+                              {s.displayName}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span>{stat?.displayName ?? statKey}</span>
+                      )}
+                    </div>
+                    {idx < presetDraftOps.length && !hideOperator ? (
+                      <button
+                        type="button"
+                        className="chain-op"
+                        onClick={() =>
+                          setPresetDraftOps((prev) =>
+                            prev.map((x, opIdx) => (opIdx === idx ? (x === "gt" ? "eq" : "gt") : x)),
+                          )
+                        }
+                        title="点击切换 > 或 ="
+                      >
+                        {presetDraftOps[idx] === "gt" ? ">" : "="}
+                      </button>
+                    ) : null}
+                  </div>
+                </Fragment>
+              );
+            })}
+            {dragState?.kind === "preset" && presetInsertBeforeIndex === null ? (
+              <span className="drag-insert-line" aria-hidden="true" />
+            ) : null}
+            <button type="button" className="chain-add" onClick={addPresetStat}>
+              +
+            </button>
+          </div>
+          <div className="inline-row">
+            <button type="button" onClick={() => void savePresetDraft()} disabled={saving}>
+              保存预设
+            </button>
+            <button type="button" onClick={() => void removePreset(presetDraftId)} disabled={saving}>
+              {pendingDeletePresetId === presetDraftId ? "确认删除预设" : "删除预设"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPresetDraftId(null);
+                setPresetDraftName("");
+                setPresetDraftStats([]);
+                setPresetDraftOps([]);
+                setActivePresetIndex(null);
+                setPendingDeletePresetId(null);
+              }}
+              disabled={saving}
+            >
+              取消管理
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 
   const removeEcho = async (echoId: string) => {
     if (pendingDeleteEchoId !== echoId) {
@@ -539,73 +1110,90 @@ export function EchoPoolPage() {
   return (
     <section className="page">
       {toast ? <div className={`toast toast-${toast.kind}`}>{toast.text}</div> : null}
+      {dragState ? (
+        <div className="drag-ghost" style={{ left: dragState.x + 12, top: dragState.y + 12 }}>
+          <span className="drag-ghost-icon">::</span>
+          <span>{dragState.label}</span>
+        </div>
+      ) : null}
 
-      <div className="card split-card">
-        <div>
-          <h3>期望预设管理</h3>
-          <label>
-            预设名称
-            <input value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="例如：双爆模板" />
-          </label>
-          <div className="inline-row">
-            <button type="button" onClick={() => void savePresetFromCurrent()} disabled={saving}>
-              {editingPresetId ? "覆盖保存预设" : "保存为新预设"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingPresetId(null);
-                setPresetName("");
-                setPendingDeletePresetId(null);
-              }}
-              disabled={saving}
-            >
-              清空选择
-            </button>
+      <div className="preset-manager-dock">
+        {presetManagerExpanded ? (
+          <div className="card preset-manager-panel">
+            <div className="preset-manager-head">
+              <strong>期望预设管理</strong>
+              <button type="button" onClick={() => setPresetManagerExpanded(false)}>
+                收起
+              </button>
+            </div>
+            {renderPresetManager()}
           </div>
-          <p className="hint">保存来源为当前“管理”中的期望词条链。</p>
-        </div>
-        <div>
-          <h3>已保存预设</h3>
-          <table className="table compact-table">
-            <thead>
-              <tr>
-                <th>名称</th>
-                <th>词条</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {expectationPresets.map((preset) => (
-                <tr key={preset.presetId}>
-                  <td>{preset.name}</td>
-                  <td>{formatPresetSummary(preset.items)}</td>
-                  <td>
-                    <div className="inline-row">
-                      <button type="button" onClick={() => loadPresetToEditor(preset)} disabled={saving}>
-                        载入编辑区
-                      </button>
-                      <button type="button" onClick={() => void applyPresetToEditingEcho(preset)} disabled={saving}>
-                        应用当前声骸
-                      </button>
-                      <button type="button" onClick={() => void removePreset(preset.presetId)} disabled={saving}>
-                        {pendingDeletePresetId === preset.presetId ? "确认删除预设" : "删除预设"}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {expectationPresets.length === 0 ? (
-                <tr>
-                  <td colSpan={3} className="chain-empty">
-                    暂无预设
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+        ) : (
+          <button type="button" className="preset-manager-tab" onClick={() => setPresetManagerExpanded(true)}>
+            <span>期望预设管理</span>
+            <span className="preset-manager-tab-icon">◀</span>
+          </button>
+        )}
       </div>
+
+      {presetSelectorOpen ? (
+        <div
+          ref={presetSelectorMenuRef}
+          className="preset-selector-menu preset-floating"
+          style={{
+            left: `${presetPopoverPos.left}px`,
+            top: `${presetPopoverPos.top}px`,
+            width: `${presetPopoverPos.width}px`,
+          }}
+        >
+          {expectationPresets.map((preset) => (
+            <button
+              key={preset.presetId}
+              type="button"
+              className={selectedPresetId === preset.presetId ? "preset-option-active" : ""}
+              onClick={() => usePresetToCurrentEditor(preset)}
+              title={formatPresetSummary(preset.items)}
+            >
+              {preset.name}
+            </button>
+          ))}
+          {expectationPresets.length === 0 ? <span className="chain-empty">暂无预设</span> : null}
+          <span className="preset-option-divider" />
+          <button
+            type="button"
+            className="preset-create-option"
+            onClick={openCreatePresetNaming}
+            disabled={saving}
+          >
+            设为预设
+          </button>
+        </div>
+      ) : null}
+
+      {presetNamingOpen ? (
+        <form
+          ref={presetNamingPopRef}
+          className="preset-naming-pop preset-floating"
+          style={{
+            left: `${presetPopoverPos.left}px`,
+            top: `${presetPopoverPos.top}px`,
+            width: `${Math.max(280, presetPopoverPos.width)}px`,
+          }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void createPresetFromCurrent();
+          }}
+        >
+          <input
+            ref={presetNamingInputRef}
+            value={presetNamingValue}
+            onChange={(e) => setPresetNamingValue(e.target.value)}
+          />
+          <button type="submit" disabled={saving}>
+            确定
+          </button>
+        </form>
+      ) : null}
 
       <div className="card echo-table-card" ref={tableWrapRef}>
         <table className="table echo-table">
@@ -775,104 +1363,131 @@ export function EchoPoolPage() {
                         <div className="inline-edit-panel">
                           <div className="chain-block">
                             <span className="chain-label">期望词条</span>
-                            <div className="chain-row">
+                            <div className="chain-row" ref={expectationRowRef}>
                               {expectationStats.length === 0 ? <span className="chain-empty">无</span> : null}
                               {expectationStats.map((statKey, idx) => {
+                                if (draggingExpectationFromIndex === idx) {
+                                  return null;
+                                }
                                 const stat = statMap.get(statKey);
                                 const selected = activeExpectationIndex === idx;
                                 const availableStats = statDefs.filter(
                                   (x) => x.statKey === statKey || !expectationStats.includes(x.statKey),
                                 );
+                                const hideOperator =
+                                  draggingExpectationFromIndex !== null &&
+                                  (idx === draggingExpectationFromIndex || idx + 1 === draggingExpectationFromIndex);
 
                                 return (
-                                  <div className="chain-fragment" key={`exp-${idx}-${statKey}`}>
-                                    <div
-                                      className={selected ? "chain-item active" : "chain-item"}
-                                      onDragOver={(e) => e.preventDefault()}
-                                      onDrop={(e) => {
-                                        e.preventDefault();
-                                        const fromIndex = getDragIndex(e) ?? dragExpectationIndex;
-                                        if (fromIndex === null || fromIndex === idx) {
-                                          setDragExpectationIndex(null);
-                                          return;
-                                        }
-                                        setExpectationStats((prev) => moveArrayItem(prev, fromIndex, idx));
-                                        setDragExpectationIndex(null);
-                                      }}
-                                      onClick={() => setActiveExpectationIndex(idx)}
-                                      onContextMenu={(e) => {
-                                        e.preventDefault();
-                                        removeExpectationAt(idx);
-                                      }}
-                                      title="单击编辑，右键删除"
-                                    >
-                                      <button
-                                        type="button"
-                                        className="drag-handle"
-                                        draggable
-                                        onDragStart={(e) => {
-                                          e.stopPropagation();
-                                          e.dataTransfer.effectAllowed = "move";
-                                          e.dataTransfer.setData("text/plain", String(idx));
-                                          setDragExpectationIndex(idx);
-                                        }}
-                                        onDragEnd={(e) => {
-                                          e.stopPropagation();
-                                          setDragExpectationIndex(null);
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
-                                        title="按住拖动排序"
-                                      >
-                                        ::
-                                      </button>
-                                      {selected ? (
-                                        <select
-                                          value={statKey}
-                                          onChange={(e) => {
-                                            const next = e.target.value;
-                                            setExpectationStats((prev) =>
-                                              prev.map((item, itemIdx) => (itemIdx === idx ? next : item)),
-                                            );
-                                          }}
-                                        >
-                                          {availableStats.map((s) => (
-                                            <option key={s.statKey} value={s.statKey}>
-                                              {s.displayName}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      ) : (
-                                        <span>{stat?.displayName ?? statKey}</span>
-                                      )}
-                                    </div>
-                                    {idx < expectationOps.length ? (
-                                      <button
-                                        type="button"
-                                        className="chain-op"
-                                        onClick={() =>
-                                          setExpectationOps((prev) =>
-                                            prev.map((x, opIdx) =>
-                                              opIdx === idx ? (x === "gt" ? "eq" : "gt") : x,
-                                            ),
-                                          )
-                                        }
-                                        title="点击切换 > 或 ="
-                                      >
-                                        {expectationOps[idx] === "gt" ? ">" : "="}
-                                      </button>
+                                  <Fragment key={`exp-${idx}-${statKey}`}>
+                                    {expectationInsertBeforeIndex === idx ? (
+                                      <span className="drag-insert-line" aria-hidden="true" />
                                     ) : null}
-                                  </div>
+                                    <div className="chain-fragment">
+                                      <div
+                                        className={selected ? "chain-item active" : "chain-item"}
+                                        data-drag-kind="expectation"
+                                        data-drag-index={idx}
+                                        onClick={() => setActiveExpectationIndex(idx)}
+                                        onContextMenu={(e) => {
+                                          e.preventDefault();
+                                          removeExpectationAt(idx);
+                                        }}
+                                        title="单击编辑，右键删除"
+                                      >
+                                        <button
+                                          type="button"
+                                          className="drag-handle"
+                                          onPointerDown={(e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            setDragState({
+                                              kind: "expectation",
+                                              fromIndex: idx,
+                                              dropIndex: idx,
+                                              pointerId: e.pointerId,
+                                              x: e.clientX,
+                                              y: e.clientY,
+                                              label: stat?.displayName ?? statKey,
+                                            });
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                          title="按住拖动排序"
+                                        >
+                                          ::
+                                        </button>
+                                        {selected ? (
+                                          <select
+                                            value={statKey}
+                                            onChange={(e) => {
+                                              const next = e.target.value;
+                                              setExpectationStats((prev) =>
+                                                prev.map((item, itemIdx) => (itemIdx === idx ? next : item)),
+                                              );
+                                            }}
+                                          >
+                                            {availableStats.map((s) => (
+                                              <option key={s.statKey} value={s.statKey}>
+                                                {s.displayName}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        ) : (
+                                          <span>{stat?.displayName ?? statKey}</span>
+                                        )}
+                                      </div>
+                                      {idx < expectationOps.length && !hideOperator ? (
+                                        <button
+                                          type="button"
+                                          className="chain-op"
+                                          onClick={() =>
+                                            setExpectationOps((prev) =>
+                                              prev.map((x, opIdx) =>
+                                                opIdx === idx ? (x === "gt" ? "eq" : "gt") : x,
+                                              ),
+                                            )
+                                          }
+                                          title="点击切换 > 或 ="
+                                        >
+                                          {expectationOps[idx] === "gt" ? ">" : "="}
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  </Fragment>
                                 );
                               })}
+                              {dragState?.kind === "expectation" && expectationInsertBeforeIndex === null ? (
+                                <span className="drag-insert-line" aria-hidden="true" />
+                              ) : null}
                               <button type="button" className="chain-add" onClick={addExpectation}>
                                 +
                               </button>
+                              <div className="preset-selector" ref={presetSelectorRef}>
+                                <button
+                                  type="button"
+                                  ref={presetSelectorButtonRef}
+                                  className={presetSelectorOpen ? "manage-btn-active" : ""}
+                                  onClick={() => {
+                                    setPresetSelectorOpen((prev) => {
+                                      const next = !prev;
+                                      if (next) {
+                                        window.requestAnimationFrame(() => syncPresetPopoverPosition());
+                                      }
+                                      return next;
+                                    });
+                                    setPresetNamingOpen(false);
+                                  }}
+                                  disabled={saving}
+                                >
+                                  预设：{selectedPresetName}
+                                </button>
+                              </div>
                             </div>
                           </div>
 
                           <div className="chain-block">
                             <span className="chain-label">槽位状态</span>
-                            <div className="chain-row">
+                            <div className="chain-row" ref={slotRowRef}>
                               {editingOrderedSlots.length === 0 && slotsDraft.length === 0 ? (
                                 <span className="chain-empty">无</span>
                               ) : null}
@@ -890,6 +1505,9 @@ export function EchoPoolPage() {
                                 </div>
                               ))}
                               {slotsDraft.map((slot, idx) => {
+                                if (draggingSlotFromIndex === idx) {
+                                  return null;
+                                }
                                 const stat = statMap.get(slot.statKey);
                                 const selected = activeSlotIndex === idx;
                                 const currentUsed = slotsDraft.map((x) => x.statKey);
@@ -902,96 +1520,96 @@ export function EchoPoolPage() {
                                 const previewSlotNo = editingEditableSlots[idx] ?? idx + 1;
 
                                 return (
-                                  <div
-                                    key={`slot-${idx}-${slot.statKey}`}
-                                    className={selected ? "chain-item active" : "chain-item"}
-                                    onDragOver={(e) => e.preventDefault()}
-                                    onDrop={(e) => {
-                                      e.preventDefault();
-                                      const fromIndex = getDragIndex(e) ?? dragSlotIndex;
-                                      if (fromIndex === null || fromIndex === idx) {
-                                        setDragSlotIndex(null);
-                                        return;
-                                      }
-                                      setSlotsDraft((prev) => moveArrayItem(prev, fromIndex, idx));
-                                      setDragSlotIndex(null);
-                                    }}
-                                    onClick={() => setActiveSlotIndex(idx)}
-                                    onContextMenu={(e) => {
-                                      e.preventDefault();
-                                      removeSlotAt(idx);
-                                    }}
-                                    title="单击编辑，右键删除"
-                                  >
-                                    <span className="slot-label">S{previewSlotNo}</span>
-                                    <button
-                                      type="button"
-                                      className="drag-handle"
-                                      draggable
-                                      onDragStart={(e) => {
-                                        e.stopPropagation();
-                                        e.dataTransfer.effectAllowed = "move";
-                                        e.dataTransfer.setData("text/plain", String(idx));
-                                        setDragSlotIndex(idx);
+                                  <Fragment key={`slot-${idx}-${slot.statKey}`}>
+                                    {slotInsertBeforeIndex === idx ? (
+                                      <span className="drag-insert-line" aria-hidden="true" />
+                                    ) : null}
+                                    <div
+                                      className={selected ? "chain-item active" : "chain-item"}
+                                      data-drag-kind="slot"
+                                      data-drag-index={idx}
+                                      onClick={() => setActiveSlotIndex(idx)}
+                                      onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        removeSlotAt(idx);
                                       }}
-                                      onDragEnd={(e) => {
-                                        e.stopPropagation();
-                                        setDragSlotIndex(null);
-                                      }}
-                                      onClick={(e) => e.stopPropagation()}
-                                      title="按住拖动排序"
+                                      title="单击编辑，右键删除"
                                     >
-                                      ::
-                                    </button>
-                                    {selected ? (
-                                      <div className="inline-row">
-                                        <select
-                                          value={slot.statKey}
-                                          onChange={(e) => {
-                                            const nextStatKey = e.target.value;
-                                            const nextTier =
-                                              statMap.get(nextStatKey)?.tiers[0]?.tierIndex ?? 1;
-                                            setSlotsDraft((prev) =>
-                                              prev.map((item, itemIdx) =>
-                                                itemIdx === idx
-                                                  ? { statKey: nextStatKey, tierIndex: nextTier }
-                                                  : item,
-                                              ),
-                                            );
-                                          }}
-                                        >
-                                          {availableStats.map((s) => (
-                                            <option key={s.statKey} value={s.statKey}>
-                                              {s.displayName}
-                                            </option>
-                                          ))}
-                                        </select>
-                                        <select
-                                          value={slot.tierIndex}
-                                          onChange={(e) => {
-                                            const nextTier = Number(e.target.value);
-                                            setSlotsDraft((prev) =>
-                                              prev.map((item, itemIdx) =>
-                                                itemIdx === idx ? { ...item, tierIndex: nextTier } : item,
-                                              ),
-                                            );
-                                          }}
-                                        >
-                                          {tiers.map((tier) => (
-                                            <option key={tier.tierIndex} value={tier.tierIndex}>
-                                              {formatTierLabel(slot.statKey, tier.tierIndex)}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                    ) : (
-                                      <span>
-                                        {stat?.displayName ?? slot.statKey} / {formatTierLabel(slot.statKey, slot.tierIndex)}
-                                      </span>
-                                    )}
-                                  </div>
+                                      <span className="slot-label">S{previewSlotNo}</span>
+                                      <button
+                                        type="button"
+                                        className="drag-handle"
+                                        onPointerDown={(e) => {
+                                          e.stopPropagation();
+                                          e.preventDefault();
+                                          setDragState({
+                                            kind: "slot",
+                                            fromIndex: idx,
+                                            dropIndex: idx,
+                                            pointerId: e.pointerId,
+                                            x: e.clientX,
+                                            y: e.clientY,
+                                            label: `S${previewSlotNo} ${statKeyToAbbr(slot.statKey)}${slot.tierIndex}`,
+                                          });
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        title="按住拖动排序"
+                                      >
+                                        ::
+                                      </button>
+                                      {selected ? (
+                                        <div className="inline-row">
+                                          <select
+                                            value={slot.statKey}
+                                            onChange={(e) => {
+                                              const nextStatKey = e.target.value;
+                                              const nextTier =
+                                                statMap.get(nextStatKey)?.tiers[0]?.tierIndex ?? 1;
+                                              setSlotsDraft((prev) =>
+                                                prev.map((item, itemIdx) =>
+                                                  itemIdx === idx
+                                                    ? { statKey: nextStatKey, tierIndex: nextTier }
+                                                    : item,
+                                                ),
+                                              );
+                                            }}
+                                          >
+                                            {availableStats.map((s) => (
+                                              <option key={s.statKey} value={s.statKey}>
+                                                {s.displayName}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          <select
+                                            value={slot.tierIndex}
+                                            onChange={(e) => {
+                                              const nextTier = Number(e.target.value);
+                                              setSlotsDraft((prev) =>
+                                                prev.map((item, itemIdx) =>
+                                                  itemIdx === idx ? { ...item, tierIndex: nextTier } : item,
+                                                ),
+                                              );
+                                            }}
+                                          >
+                                            {tiers.map((tier) => (
+                                              <option key={tier.tierIndex} value={tier.tierIndex}>
+                                                {formatTierLabel(slot.statKey, tier.tierIndex)}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      ) : (
+                                        <span>
+                                          {stat?.displayName ?? slot.statKey} / {formatTierLabel(slot.statKey, slot.tierIndex)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </Fragment>
                                 );
                               })}
+                              {dragState?.kind === "slot" && slotInsertBeforeIndex === null ? (
+                                <span className="drag-insert-line" aria-hidden="true" />
+                              ) : null}
                               <button
                                 type="button"
                                 className="chain-add"

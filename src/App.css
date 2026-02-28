@@ -20,6 +20,11 @@ body {
   background: radial-gradient(circle at top right, #dbeafe, transparent 45%), var(--bg);
 }
 
+body.is-dragging-chain {
+  cursor: grabbing;
+  user-select: none;
+}
+
 .app-shell {
   max-width: none;
   margin: 0 auto;
@@ -210,6 +215,123 @@ button:hover {
   gap: 6px;
 }
 
+.preset-table td:nth-child(2) {
+  max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preset-manager-dock {
+  position: fixed;
+  top: 68px;
+  right: 8px;
+  z-index: 2100;
+  pointer-events: none;
+}
+
+.preset-manager-tab,
+.preset-manager-panel {
+  pointer-events: auto;
+}
+
+.preset-manager-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  min-height: 148px;
+  border-radius: 8px 0 0 8px;
+  border-right: 0;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+}
+
+.preset-manager-tab-icon {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.preset-manager-panel {
+  width: min(700px, calc(100vw - 26px));
+  max-height: min(82vh, 860px);
+  overflow: auto;
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.2);
+}
+
+.preset-manager-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.preset-selector {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.preset-selector-menu {
+  position: fixed;
+  min-width: 220px;
+  max-width: min(360px, 80vw);
+  max-height: 280px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+  z-index: 2200;
+}
+
+.preset-selector-menu button {
+  width: 100%;
+  text-align: left;
+}
+
+.preset-option-active {
+  border-color: var(--accent);
+  background: #eff6ff;
+  color: var(--accent-ink);
+}
+
+.preset-option-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 5px 0 3px;
+}
+
+.preset-create-option {
+  font-weight: 600;
+}
+
+.preset-naming-pop {
+  position: fixed;
+  min-width: 260px;
+  max-width: min(420px, 86vw);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+  z-index: 2201;
+}
+
+.preset-naming-pop input {
+  flex: 1;
+}
+
+.preset-floating {
+  z-index: 2201;
+}
+
 .chain-label {
   font-size: 12px;
   color: var(--muted);
@@ -229,6 +351,7 @@ button:hover {
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
 .chain-item {
@@ -242,6 +365,7 @@ button:hover {
   background: #fff;
   cursor: pointer;
   flex: 0 0 auto;
+  transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .chain-item.active {
@@ -262,10 +386,43 @@ button:hover {
   min-width: 22px;
   padding: 2px 4px;
   cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
 }
 
 .drag-handle:active {
   cursor: grabbing;
+}
+
+.drag-insert-line {
+  width: 2px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.18);
+  flex: 0 0 auto;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 2200;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #7dd3fc;
+  background: rgba(239, 246, 255, 0.96);
+  color: #0c4a6e;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  box-shadow: 0 10px 24px rgba(14, 116, 144, 0.24);
+}
+
+.drag-ghost-icon {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
 }
 
 .chain-op {
@@ -516,6 +673,23 @@ button:hover {
 
   .echo-actions-inline {
     flex-wrap: wrap;
+  }
+
+  .preset-manager-dock {
+    top: 54px;
+    right: 6px;
+  }
+
+  .preset-manager-tab {
+    writing-mode: horizontal-tb;
+    min-height: auto;
+    border-right: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  .preset-manager-panel {
+    width: calc(100vw - 12px);
+    max-height: 74vh;
   }
 }
 
