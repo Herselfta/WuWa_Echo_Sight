@@ -126,7 +126,7 @@ function statKeyToAbbr(statKey: string): string {
 /* ── component ───────────────────────────────────── */
 
 export function RecordPage() {
-  const { echoes, statDefs, expectationPresets, refreshEchoes, refreshExpectationPresets } = useAppStore();
+  const { echoes, statDefs, expectationPresets, selectedEchoId, setSelectedEchoId, refreshEchoes, refreshExpectationPresets } = useAppStore();
   const statMap = useMemo(() => new Map(statDefs.map((x) => [x.statKey, x])), [statDefs]);
 
   /* === create echo form === */
@@ -153,7 +153,6 @@ export function RecordPage() {
   const [createActiveSlotIdx, setCreateActiveSlotIdx] = useState<number | null>(null);
 
   /* === record event === */
-  const [selectedEchoId, setSelectedEchoId] = useState<string>("");
   const [statKey, setStatKey] = useState<string>("crit_rate");
   const [tierIndex, setTierIndex] = useState<number>(1);
   const [eventTimeLocal, setEventTimeLocal] = useState<string>(toLocalInputValue(new Date()));

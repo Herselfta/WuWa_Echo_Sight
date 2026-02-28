@@ -21,12 +21,14 @@ interface AppState {
   expectationPresets: ExpectationPreset[];
   distribution: DistributionPayload | null;
   selectedStatKey: string | null;
+  selectedEchoId: string;
   echoProbRows: EchoProbRow[];
   distributionFilter: DistributionFilter;
   loading: boolean;
   error: string | null;
   setDistributionFilter: (patch: Partial<DistributionFilter>) => void;
   setSelectedStatKey: (key: string | null) => void;
+  setSelectedEchoId: (id: string) => void;
   loadBootData: () => Promise<void>;
   refreshEchoes: () => Promise<void>;
   refreshDistribution: () => Promise<void>;
@@ -40,6 +42,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   expectationPresets: [],
   distribution: null,
   selectedStatKey: null,
+  selectedEchoId: "",
   echoProbRows: [],
   distributionFilter: {},
   loading: false,
@@ -53,6 +56,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
   setSelectedStatKey: (key) => set({ selectedStatKey: key }),
+  setSelectedEchoId: (id) => set({ selectedEchoId: id }),
   loadBootData: async () => {
     set({ loading: true, error: null });
     try {
