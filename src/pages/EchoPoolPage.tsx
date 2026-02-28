@@ -831,7 +831,7 @@ export function EchoPoolPage() {
 
   const columnWidths = useMemo(() => {
     const total = Math.max(tableClientWidth, 1);
-    const select = batchPanelExpanded ? 40 : 0;
+    const select = 40;
     const actions = total >= 760 ? 270 : Math.max(210, Math.floor(total * 0.32));
     const remaining = Math.max(total - actions - select, 0);
     const nickname = Math.floor((remaining * 3) / 10);
@@ -848,7 +848,7 @@ export function EchoPoolPage() {
       slots,
       actions,
     };
-  }, [batchPanelExpanded, tableClientWidth]);
+  }, [tableClientWidth]);
 
   const editingEcho = useMemo(
     () => echoes.find((echo) => echo.echoId === editingEchoId) ?? null,
@@ -894,7 +894,7 @@ export function EchoPoolPage() {
     () => expectationPresets.find((preset) => preset.presetId === selectedPresetId)?.name ?? "未选择",
     [expectationPresets, selectedPresetId],
   );
-  const tableColumnCount = batchPanelExpanded ? 7 : 6;
+  const tableColumnCount = 7;
 
   const openBatchPanel = () => setBatchPanelExpanded(true);
   const collapseBatchPanel = () => {
@@ -902,6 +902,12 @@ export function EchoPoolPage() {
     setSelectedEchoIds([]);
     setSelectionAnchorId(null);
     setPendingBatchDelete(false);
+  };
+  const clearNativeTextSelection = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.getSelection?.()?.removeAllRanges();
   };
 
   const applyEchoSelection = (echoId: string, options: { toggle: boolean; range: boolean }) => {
@@ -956,6 +962,18 @@ export function EchoPoolPage() {
       toggle: isToggle,
       range: isRange,
     });
+    clearNativeTextSelection();
+  };
+
+  const onEchoRowMouseDown = (event: ReactMouseEvent<HTMLTableRowElement>) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest("button, input, select, textarea, a, label")) {
+      return;
+    }
+    const hasModifier = event.shiftKey || event.metaKey || event.ctrlKey;
+    if (batchPanelExpanded || hasModifier) {
+      event.preventDefault();
+    }
   };
 
   const onEchoCheckboxClick = (event: ReactMouseEvent<HTMLInputElement>, echoId: string) => {
@@ -964,6 +982,7 @@ export function EchoPoolPage() {
       toggle: event.metaKey || event.ctrlKey || !event.shiftKey,
       range: event.shiftKey,
     });
+    clearNativeTextSelection();
   };
 
   const onToggleSelectAllVisible = (checked: boolean) => {
@@ -1878,16 +1897,92 @@ export function EchoPoolPage() {
       <div className="card echo-table-card" ref={tableWrapRef}>
         <div className="echo-toolbar">
           <div className="echo-toolbar-group echo-filter-group">
-            <span className="echo-toolbar-title echo-filter-title">筛选</span>
-            <input
-              className="echo-search-input"
-              value={echoFilters.searchText}
-              placeholder="搜索ID/昵称"
-              onChange={(e) => setEchoFilters((prev) => ({ ...prev, searchText: e.target.value }))}
-            />
+            <div className="echo-filter-head">
+              <div className="echo-filter-head-main">
+                <span className="echo-toolbar-title echo-filter-title">筛选</span>
+                <button
+                  type="button"
+                  className="echo-toolbar-control echo-reset-btn"
+                  onClick={() => setEchoFilters({ ...DEFAULT_ECHO_FILTERS })}
+                  disabled={isDefaultEchoFilters(echoFilters)}
+                  title="重置筛选"
+                  aria-label="重置筛选"
+                >
+                  ↻
+                </button>
+                <input
+                  className="echo-search-input"
+                  value={echoFilters.searchText}
+                  placeholder="搜索ID/昵称"
+                  onChange={(e) => setEchoFilters((prev) => ({ ...prev, searchText: e.target.value }))}
+                />
+              </div>
+              <div className={`echo-filter-batch ${batchPanelExpanded ? "is-expanded" : "is-collapsed"}`}>
+                {batchPanelExpanded ? (
+                  <>
+                    <div className="echo-filter-batch-info">
+                      <span className="echo-toolbar-title">批量</span>
+                      <span className="echo-toolbar-meta">
+                        已选 {selectedEchoIds.length} / 可见 {filteredEchoes.length}
+                      </span>
+                    </div>
+                    <select
+                      className="echo-toolbar-control"
+                      value={batchPresetId}
+                      onChange={(e) => setBatchPresetId(e.target.value)}
+                    >
+                      <option value="">选择预设</option>
+                      {expectationPresets.map((preset) => (
+                        <option key={preset.presetId} value={preset.presetId}>
+                          {preset.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="echo-toolbar-control"
+                      onClick={() => void applyPresetToSelectedEchoes()}
+                      disabled={saving}
+                    >
+                      批量应用预设
+                    </button>
+                    <button
+                      type="button"
+                      className="echo-toolbar-control"
+                      onClick={() => void removeSelectedEchoes()}
+                      disabled={saving}
+                    >
+                      {pendingBatchDelete ? "确认批量删除" : "批量删除"}
+                    </button>
+                    <div className="hover-tip">
+                      <button
+                        type="button"
+                        className="hover-tip-trigger"
+                        aria-label="多选说明"
+                        title="行点击支持 Ctrl/Cmd 多选，Shift 区间选择"
+                      >
+                        ?
+                      </button>
+                      <span className="hover-tip-content">行点击支持 Ctrl/Cmd 多选，Shift 区间选择</span>
+                    </div>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  className={`echo-toolbar-control echo-batch-expand-btn ${batchPanelExpanded ? "manage-btn-active" : ""}`}
+                  onClick={() => (batchPanelExpanded ? collapseBatchPanel() : openBatchPanel())}
+                  disabled={saving}
+                  title={batchPanelExpanded ? "收起批量" : "展开批量"}
+                  aria-label={batchPanelExpanded ? "收起批量" : "展开批量"}
+                >
+                  ☑
+                </button>
+              </div>
+            </div>
             <label className="echo-short-select">
               Cost
               <select
+                className="echo-toolbar-control"
                 value={echoFilters.costClass}
                 onChange={(e) =>
                   setEchoFilters((prev) => ({ ...prev, costClass: e.target.value as EchoFilters["costClass"] }))
@@ -1902,6 +1997,7 @@ export function EchoPoolPage() {
             <label>
               主词条
               <select
+                className="echo-toolbar-control"
                 value={echoFilters.mainStatKey}
                 onChange={(e) => setEchoFilters((prev) => ({ ...prev, mainStatKey: e.target.value }))}
               >
@@ -1916,6 +2012,7 @@ export function EchoPoolPage() {
             <label>
               状态
               <select
+                className="echo-toolbar-control"
                 value={echoFilters.status}
                 onChange={(e) =>
                   setEchoFilters((prev) => ({
@@ -1938,6 +2035,7 @@ export function EchoPoolPage() {
             <label className="echo-short-select">
               已开槽位
               <select
+                className="echo-toolbar-control"
                 value={echoFilters.openedSlots}
                 onChange={(e) =>
                   setEchoFilters((prev) => ({ ...prev, openedSlots: e.target.value as EchoFilters["openedSlots"] }))
@@ -1955,6 +2053,7 @@ export function EchoPoolPage() {
             <label>
               副词条逻辑
               <select
+                className="echo-toolbar-control"
                 value={echoFilters.substatMode}
                 onChange={(e) =>
                   setEchoFilters((prev) => ({
@@ -1973,7 +2072,7 @@ export function EchoPoolPage() {
             <div className="echo-substat-selector" ref={substatSelectorRef}>
               <button
                 type="button"
-                className={substatSelectorOpen ? "manage-btn-active" : ""}
+                className={`${substatSelectorOpen ? "manage-btn-active " : ""}echo-toolbar-control echo-substat-trigger`}
                 onClick={() => setSubstatSelectorOpen((prev) => !prev)}
               >
                 副词条：{echoFilters.substatStatKeys.length === 0 ? "全部" : `${echoFilters.substatStatKeys.length}项`}
@@ -2018,6 +2117,7 @@ export function EchoPoolPage() {
             <label>
               排序
               <select
+                className="echo-toolbar-control"
                 value={echoFilters.sortBy}
                 onChange={(e) =>
                   setEchoFilters((prev) => ({
@@ -2033,63 +2133,11 @@ export function EchoPoolPage() {
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              onClick={() => setEchoFilters({ ...DEFAULT_ECHO_FILTERS })}
-              disabled={isDefaultEchoFilters(echoFilters)}
-            >
-              重置筛选
-            </button>
           </div>
-
-          {batchPanelExpanded ? (
-            <div className="echo-toolbar-group echo-batch-group">
-              <div className="echo-batch-head-row">
-                <div className="echo-batch-head">
-                  <span className="echo-toolbar-title">批量</span>
-                  <span className="echo-toolbar-meta">
-                    已选 {selectedEchoIds.length} / 可见 {filteredEchoes.length}
-                  </span>
-                </div>
-                <button type="button" className="echo-batch-toggle-btn" onClick={collapseBatchPanel} disabled={saving}>
-                  收起
-                </button>
-              </div>
-              <select value={batchPresetId} onChange={(e) => setBatchPresetId(e.target.value)}>
-                <option value="">选择预设</option>
-                {expectationPresets.map((preset) => (
-                  <option key={preset.presetId} value={preset.presetId}>
-                    {preset.name}
-                  </option>
-                ))}
-              </select>
-              <button type="button" onClick={() => void applyPresetToSelectedEchoes()} disabled={saving}>
-                批量应用预设
-              </button>
-              <button type="button" onClick={() => void removeSelectedEchoes()} disabled={saving}>
-                {pendingBatchDelete ? "确认批量删除" : "批量删除"}
-              </button>
-              <div className="hover-tip">
-                <button
-                  type="button"
-                  className="hover-tip-trigger"
-                  aria-label="多选说明"
-                  title="行点击支持 Ctrl/Cmd 多选，Shift 区间选择"
-                >
-                  ?
-                </button>
-                <span className="hover-tip-content">行点击支持 Ctrl/Cmd 多选，Shift 区间选择</span>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className="echo-batch-collapsed-btn" onClick={openBatchPanel}>
-              批量（点击展开）
-            </button>
-          )}
         </div>
         <table className="table echo-table">
           <colgroup>
-            {batchPanelExpanded ? <col className="echo-col-select" style={{ width: `${columnWidths.select}px` }} /> : null}
+            <col className="echo-col-select" style={{ width: `${columnWidths.select}px` }} />
             <col className="echo-col-nickname" style={{ width: `${columnWidths.nickname}px` }} />
             <col className="echo-col-main" style={{ width: `${columnWidths.main}px` }} />
             <col className="echo-col-cost" style={{ width: `${columnWidths.cost}px` }} />
@@ -2099,18 +2147,22 @@ export function EchoPoolPage() {
           </colgroup>
           <thead>
             <tr>
-              {batchPanelExpanded ? (
-                <th className="echo-col-select">
-                  <input
-                    ref={selectAllCheckboxRef}
-                    type="checkbox"
-                    checked={allFilteredSelected}
-                    onChange={(e) => onToggleSelectAllVisible(e.target.checked)}
-                    disabled={filteredEchoes.length === 0}
-                    title="全选当前筛选结果"
-                  />
-                </th>
-              ) : null}
+              <th className="echo-col-select">
+                <div className="echo-cell echo-select-cell">
+                  {batchPanelExpanded ? (
+                    <input
+                      ref={selectAllCheckboxRef}
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={(e) => onToggleSelectAllVisible(e.target.checked)}
+                      disabled={filteredEchoes.length === 0}
+                      title="全选当前筛选结果"
+                    />
+                  ) : (
+                    <span className="echo-select-placeholder" aria-hidden="true" />
+                  )}
+                </div>
+              </th>
               <th className="echo-col-nickname">昵称</th>
               <th className="echo-col-main">主词条</th>
               <th className="echo-col-cost">Cost</th>
@@ -2132,11 +2184,12 @@ export function EchoPoolPage() {
                   <tr
                     key={`${echo.echoId}-row`}
                     className={rowClassName || undefined}
+                    onMouseDown={onEchoRowMouseDown}
                     onClick={(event) => onEchoRowClick(event, echo.echoId)}
                   >
-                    {batchPanelExpanded ? (
-                      <td className="echo-col-select">
-                        <div className="echo-cell echo-select-cell">
+                    <td className="echo-col-select">
+                      <div className="echo-cell echo-select-cell">
+                        {batchPanelExpanded ? (
                           <input
                             type="checkbox"
                             checked={selected}
@@ -2144,9 +2197,11 @@ export function EchoPoolPage() {
                             readOnly
                             title="选择该声骸"
                           />
-                        </div>
-                      </td>
-                    ) : null}
+                        ) : (
+                          <span className="echo-select-placeholder" aria-hidden="true" />
+                        )}
+                      </div>
+                    </td>
                     <td className="echo-col-nickname">
                       <div className="echo-cell">
                         {editing && basicDraft ? (
@@ -2232,24 +2287,26 @@ export function EchoPoolPage() {
                       </div>
                     </td>
                     <td className="echo-col-slots">
-                      <div className="slot-summary-list">
-                        <span className="slot-summary-head">{echo.openedSlotsCount}/5</span>
-                        {echo.currentSubstats.length === 0 ? (
-                          <span className="chain-empty">无</span>
-                        ) : (
-                          [...echo.currentSubstats]
-                            .sort((a, b) => a.slotNo - b.slotNo)
-                            .map((slot) => (
-                              <span
-                                key={`${echo.echoId}-slot-${slot.slotNo}`}
-                                className={slot.source === "ordered_event" ? "slot-pill slot-pill-locked" : "slot-pill"}
-                                title={`${slot.slotNo}: ${statMap.get(slot.statKey)?.displayName ?? slot.statKey} ${formatTierLabel(slot.statKey, slot.tierIndex)}`}
-                              >
-                                {slot.slotNo}: {statKeyToAbbr(slot.statKey)}
-                                {slot.tierIndex}
-                              </span>
-                            ))
-                        )}
+                      <div className="echo-cell">
+                        <div className="slot-summary-list">
+                          <span className="slot-summary-head">{echo.openedSlotsCount}/5</span>
+                          {echo.currentSubstats.length === 0 ? (
+                            <span className="chain-empty">无</span>
+                          ) : (
+                            [...echo.currentSubstats]
+                              .sort((a, b) => a.slotNo - b.slotNo)
+                              .map((slot) => (
+                                <span
+                                  key={`${echo.echoId}-slot-${slot.slotNo}`}
+                                  className={slot.source === "ordered_event" ? "slot-pill slot-pill-locked" : "slot-pill"}
+                                  title={`${slot.slotNo}: ${statMap.get(slot.statKey)?.displayName ?? slot.statKey} ${formatTierLabel(slot.statKey, slot.tierIndex)}`}
+                                >
+                                  {slot.slotNo}: {statKeyToAbbr(slot.statKey)}
+                                  {slot.tierIndex}
+                                </span>
+                              ))
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="echo-actions-col">

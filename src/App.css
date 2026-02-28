@@ -698,6 +698,24 @@ button:hover {
   min-width: 104px;
 }
 
+.echo-toolbar-control {
+  height: 24px;
+  min-height: 24px;
+  padding: 2px 8px;
+  line-height: 1.2;
+}
+
+.echo-reset-btn {
+  min-width: 24px;
+  width: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+}
+
 .echo-toolbar-group label.echo-short-select {
   min-width: 74px;
 }
@@ -707,15 +725,36 @@ button:hover {
   width: 72px;
 }
 
+.echo-filter-head {
+  flex: 0 0 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  min-height: 24px;
+}
+
 .echo-filter-title {
-  flex-basis: 100%;
-  align-self: flex-start;
-  margin: 0 0 2px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 24px;
 }
 
 .echo-search-input {
-  min-width: 220px;
-  width: 220px;
+  flex: 0 0 160px;
+  min-width: 160px;
+  width: 160px;
+  height: 24px;
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+.echo-search-input::placeholder {
+  font-size: 12px;
 }
 
 .echo-substat-selector {
@@ -793,30 +832,31 @@ button:hover {
   flex: 0 1 auto;
   width: fit-content;
   max-width: 100%;
-  align-items: center;
+  margin-left: auto;
+  align-items: flex-start;
   align-content: flex-start;
 }
 
-.echo-batch-collapsed-btn {
-  align-self: flex-start;
-  white-space: nowrap;
-  border-style: dashed;
-}
-
-.echo-batch-head-row {
-  flex: 0 0 100%;
-  width: 100%;
+.echo-batch-row {
   display: flex;
-  justify-content: space-between;
   align-items: flex-start;
   gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .echo-batch-head {
-  flex: 1 1 auto;
   display: grid;
   gap: 1px;
   justify-items: start;
+  white-space: nowrap;
+}
+
+.echo-batch-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .echo-batch-head .echo-toolbar-title,
@@ -824,8 +864,24 @@ button:hover {
   align-self: start;
 }
 
-.echo-batch-toggle-btn {
-  white-space: nowrap;
+.echo-batch-expand-btn {
+  min-width: 24px;
+  width: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.echo-batch-group.is-collapsed .echo-batch-head,
+.echo-batch-group.is-collapsed .echo-batch-controls {
+  display: none;
+}
+
+.echo-batch-group.is-collapsed .echo-batch-row {
+  justify-content: flex-end;
 }
 
 .hover-tip {
@@ -839,9 +895,9 @@ button:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
-  width: 26px;
-  height: 26px;
+  min-width: 24px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border-radius: 999px;
   text-align: center;
@@ -884,14 +940,25 @@ button:hover {
 
 .echo-col-select {
   text-align: center;
+  vertical-align: middle;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
 }
 
 .echo-col-select input {
-  margin: 0;
+  margin: 0 auto;
+  display: block;
 }
 
 .echo-select-cell {
+  min-height: 30px;
   justify-content: center;
+}
+
+.echo-select-placeholder {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
 }
 
 .echo-inline-nickname {
@@ -988,6 +1055,32 @@ button:hover {
     width: 100%;
   }
 
+  .echo-batch-group {
+    margin-left: 0;
+  }
+
+  .echo-batch-row {
+    width: 100%;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .echo-batch-head {
+    order: 1;
+  }
+
+  .echo-batch-expand-btn {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .echo-batch-controls {
+    order: 3;
+    flex: 1 1 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
   .echo-toolbar-group label {
     min-width: 96px;
   }
@@ -1001,12 +1094,18 @@ button:hover {
     width: 72px;
   }
 
+  .echo-filter-head {
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
   .echo-search-input,
   .echo-substat-selector {
     min-width: 100%;
   }
 
   .echo-search-input {
+    flex: 1 1 100%;
     min-width: 100%;
     width: 100%;
   }
