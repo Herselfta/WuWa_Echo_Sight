@@ -47,6 +47,23 @@ function buildDefaultPresetName(date = new Date()) {
   )}${String(date.getSeconds()).padStart(2, "0")}`;
 }
 
+function areChainsEqual(aStats: string[], aOps: RelOp[], bStats: string[], bOps: RelOp[]) {
+  if (aStats.length !== bStats.length || aOps.length !== bOps.length) {
+    return false;
+  }
+  for (let i = 0; i < aStats.length; i += 1) {
+    if (aStats[i] !== bStats[i]) {
+      return false;
+    }
+  }
+  for (let i = 0; i < aOps.length; i += 1) {
+    if (aOps[i] !== bOps[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const STAT_ABBR_MAP: Record<string, string> = {
   crit_rate: "b",
   crit_dmg: "B",
@@ -328,6 +345,20 @@ export function EchoPoolPage() {
       setSelectedPresetId(null);
     }
   }, [expectationPresets, selectedPresetId]);
+
+  useEffect(() => {
+    if (!selectedPresetId) {
+      return;
+    }
+    const selectedPreset = expectationPresets.find((preset) => preset.presetId === selectedPresetId);
+    if (!selectedPreset) {
+      return;
+    }
+    const chain = buildExpectationChain(selectedPreset.items);
+    if (!areChainsEqual(expectationStats, expectationOps, chain.stats, chain.ops)) {
+      setSelectedPresetId(null);
+    }
+  }, [expectationStats, expectationOps, expectationPresets, selectedPresetId]);
 
   useEffect(() => {
     if (!dragState) {
