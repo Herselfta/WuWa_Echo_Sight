@@ -38,10 +38,32 @@ interface DragState {
 
 type PresetDraftSource = Pick<ExpectationPreset, "presetId" | "name" | "items">;
 type PresetCreateSource = "selector" | "manager";
+type SubstatFilterMode = "or" | "and" | "not";
+type EchoSortBy =
+  | "created_desc"
+  | "created_asc"
+  | "updated_desc"
+  | "updated_asc"
+  | "opened_desc"
+  | "opened_asc"
+  | "cost_desc"
+  | "cost_asc"
+  | "main_asc"
+  | "main_desc"
+  | "status_asc"
+  | "status_desc"
+  | "nickname_asc"
+  | "nickname_desc";
+
 interface EchoFilters {
   costClass: "all" | "1" | "3" | "4";
   mainStatKey: string;
   status: "all" | EchoStatus;
+  openedSlots: "all" | "0" | "1" | "2" | "3" | "4" | "5";
+  searchText: string;
+  substatMode: SubstatFilterMode;
+  substatStatKeys: string[];
+  sortBy: EchoSortBy;
 }
 
 const ECHO_FILTER_STORAGE_KEY = "wuwa.echo-pool.filters.v1";
@@ -49,8 +71,55 @@ const DEFAULT_ECHO_FILTERS: EchoFilters = {
   costClass: "all",
   mainStatKey: "all",
   status: "all",
+  openedSlots: "all",
+  searchText: "",
+  substatMode: "or",
+  substatStatKeys: [],
+  sortBy: "created_desc",
 };
 const ECHO_STATUS_OPTIONS: EchoStatus[] = ["tracking", "paused", "abandoned", "completed"];
+const SUBSTAT_FILTER_MODE_OPTIONS: Array<{ value: SubstatFilterMode; label: string }> = [
+  { value: "or", label: "或（任一匹配）" },
+  { value: "and", label: "与（全部匹配）" },
+  { value: "not", label: "非（全部排除）" },
+];
+const ECHO_SORT_OPTIONS: Array<{ value: EchoSortBy; label: string }> = [
+  { value: "created_desc", label: "创建时间（新到旧）" },
+  { value: "created_asc", label: "创建时间（旧到新）" },
+  { value: "updated_desc", label: "更新时间（新到旧）" },
+  { value: "updated_asc", label: "更新时间（旧到新）" },
+  { value: "opened_desc", label: "已开槽位（多到少）" },
+  { value: "opened_asc", label: "已开槽位（少到多）" },
+  { value: "cost_desc", label: "Cost（高到低）" },
+  { value: "cost_asc", label: "Cost（低到高）" },
+  { value: "main_asc", label: "主词条（A-Z）" },
+  { value: "main_desc", label: "主词条（Z-A）" },
+  { value: "status_asc", label: "状态（A-Z）" },
+  { value: "status_desc", label: "状态（Z-A）" },
+  { value: "nickname_asc", label: "名称（A-Z）" },
+  { value: "nickname_desc", label: "名称（Z-A）" },
+];
+
+function sanitizeEchoSortBy(input: unknown): EchoSortBy {
+  return ECHO_SORT_OPTIONS.some((option) => option.value === input) ? (input as EchoSortBy) : "created_desc";
+}
+
+function sanitizeSubstatFilterMode(input: unknown): SubstatFilterMode {
+  return input === "or" || input === "and" || input === "not" ? input : "or";
+}
+
+function isDefaultEchoFilters(filters: EchoFilters): boolean {
+  return (
+    filters.costClass === DEFAULT_ECHO_FILTERS.costClass &&
+    filters.mainStatKey === DEFAULT_ECHO_FILTERS.mainStatKey &&
+    filters.status === DEFAULT_ECHO_FILTERS.status &&
+    filters.openedSlots === DEFAULT_ECHO_FILTERS.openedSlots &&
+    filters.searchText.trim() === DEFAULT_ECHO_FILTERS.searchText &&
+    filters.substatMode === DEFAULT_ECHO_FILTERS.substatMode &&
+    filters.substatStatKeys.length === 0 &&
+    filters.sortBy === DEFAULT_ECHO_FILTERS.sortBy
+  );
+}
 
 function parseEchoFilters(raw: string | null): EchoFilters {
   if (!raw) {
@@ -69,10 +138,36 @@ function parseEchoFilters(raw: string | null): EchoFilters {
       typeof parsed.status === "string" && (parsed.status === "all" || ECHO_STATUS_OPTIONS.includes(parsed.status as EchoStatus))
         ? parsed.status
         : "all";
+    const openedSlots =
+      parsed.openedSlots === "0" ||
+      parsed.openedSlots === "1" ||
+      parsed.openedSlots === "2" ||
+      parsed.openedSlots === "3" ||
+      parsed.openedSlots === "4" ||
+      parsed.openedSlots === "5"
+        ? parsed.openedSlots
+        : "all";
+    const searchText = typeof parsed.searchText === "string" ? parsed.searchText : "";
+    const substatMode = sanitizeSubstatFilterMode(parsed.substatMode);
+    const substatStatKeys = Array.isArray(parsed.substatStatKeys)
+      ? Array.from(
+          new Set(
+            parsed.substatStatKeys.filter(
+              (value): value is string => typeof value === "string" && value.trim().length > 0,
+            ),
+          ),
+        )
+      : [];
+    const sortBy = sanitizeEchoSortBy(parsed.sortBy);
     return {
       costClass,
       mainStatKey,
       status,
+      openedSlots,
+      searchText,
+      substatMode,
+      substatStatKeys,
+      sortBy,
     };
   } catch {
     return { ...DEFAULT_ECHO_FILTERS };
@@ -256,6 +351,7 @@ export function EchoPoolPage() {
   const presetSelectorMenuRef = useRef<HTMLDivElement | null>(null);
   const presetNamingPopRef = useRef<HTMLFormElement | null>(null);
   const presetNamingInputRef = useRef<HTMLInputElement | null>(null);
+  const substatSelectorRef = useRef<HTMLDivElement | null>(null);
   const selectAllCheckboxRef = useRef<HTMLInputElement | null>(null);
   const expectationRowRef = useRef<HTMLDivElement | null>(null);
   const slotRowRef = useRef<HTMLDivElement | null>(null);
@@ -296,6 +392,8 @@ export function EchoPoolPage() {
   const [presetDraftStats, setPresetDraftStats] = useState<string[]>([]);
   const [presetDraftOps, setPresetDraftOps] = useState<RelOp[]>([]);
   const [echoFilters, setEchoFilters] = useState<EchoFilters>(() => loadEchoFilters());
+  const [substatSelectorOpen, setSubstatSelectorOpen] = useState(false);
+  const [batchPanelExpanded, setBatchPanelExpanded] = useState(false);
   const [selectedEchoIds, setSelectedEchoIds] = useState<string[]>([]);
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
   const [batchPresetId, setBatchPresetId] = useState("");
@@ -305,8 +403,11 @@ export function EchoPoolPage() {
   const [toast, setToast] = useState<{ id: number; text: string; kind: ToastKind } | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const filteredEchoes = useMemo(
-    () =>
-      echoes.filter((echo) => {
+    () => {
+      const normalizedSearch = echoFilters.searchText.trim().toLocaleLowerCase();
+      const requiredSubstats = echoFilters.substatStatKeys;
+
+      const filtered = echoes.filter((echo) => {
         if (echoFilters.costClass !== "all" && String(echo.costClass) !== echoFilters.costClass) {
           return false;
         }
@@ -316,9 +417,100 @@ export function EchoPoolPage() {
         if (echoFilters.status !== "all" && echo.status !== echoFilters.status) {
           return false;
         }
+        if (echoFilters.openedSlots !== "all" && String(echo.openedSlotsCount) !== echoFilters.openedSlots) {
+          return false;
+        }
+        if (normalizedSearch) {
+          const searchBlob = [echo.nickname ?? "", echo.echoId].join(" ").toLocaleLowerCase();
+          if (!searchBlob.includes(normalizedSearch)) {
+            return false;
+          }
+        }
+        if (requiredSubstats.length > 0) {
+          const currentSubstats = new Set(echo.currentSubstats.map((slot) => slot.statKey));
+          if (echoFilters.substatMode === "and") {
+            if (!requiredSubstats.every((statKey) => currentSubstats.has(statKey))) {
+              return false;
+            }
+          } else if (echoFilters.substatMode === "or") {
+            if (!requiredSubstats.some((statKey) => currentSubstats.has(statKey))) {
+              return false;
+            }
+          } else if (requiredSubstats.some((statKey) => currentSubstats.has(statKey))) {
+            return false;
+          }
+        }
         return true;
-      }),
-    [echoes, echoFilters],
+      });
+
+      const readMainStat = (echo: (typeof echoes)[number]) =>
+        statMap.get(echo.mainStatKey)?.displayName ?? echo.mainStatKey;
+      const readNickname = (echo: (typeof echoes)[number]) => (echo.nickname?.trim() || echo.echoId).toLocaleLowerCase();
+      const parseTimestamp = (value: string) => {
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+
+      const compareText = (a: string, b: string) => a.localeCompare(b, "zh-Hans-CN");
+      const sorted = [...filtered].sort((a, b) => {
+        let diff = 0;
+        switch (echoFilters.sortBy) {
+          case "created_desc":
+            diff = parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt);
+            break;
+          case "created_asc":
+            diff = parseTimestamp(a.createdAt) - parseTimestamp(b.createdAt);
+            break;
+          case "updated_desc":
+            diff = parseTimestamp(b.updatedAt) - parseTimestamp(a.updatedAt);
+            break;
+          case "updated_asc":
+            diff = parseTimestamp(a.updatedAt) - parseTimestamp(b.updatedAt);
+            break;
+          case "opened_desc":
+            diff = b.openedSlotsCount - a.openedSlotsCount;
+            break;
+          case "opened_asc":
+            diff = a.openedSlotsCount - b.openedSlotsCount;
+            break;
+          case "cost_desc":
+            diff = b.costClass - a.costClass;
+            break;
+          case "cost_asc":
+            diff = a.costClass - b.costClass;
+            break;
+          case "main_asc":
+            diff = compareText(readMainStat(a), readMainStat(b));
+            break;
+          case "main_desc":
+            diff = compareText(readMainStat(b), readMainStat(a));
+            break;
+          case "status_asc":
+            diff = compareText(a.status, b.status);
+            break;
+          case "status_desc":
+            diff = compareText(b.status, a.status);
+            break;
+          case "nickname_asc":
+            diff = compareText(readNickname(a), readNickname(b));
+            break;
+          case "nickname_desc":
+            diff = compareText(readNickname(b), readNickname(a));
+            break;
+          default:
+            diff = parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt);
+            break;
+        }
+
+        if (diff !== 0) {
+          return diff;
+        }
+        return compareText(a.echoId, b.echoId);
+      });
+
+      return sorted;
+    },
+    [echoes, echoFilters, statMap],
   );
   const filteredEchoIds = useMemo(() => filteredEchoes.map((echo) => echo.echoId), [filteredEchoes]);
   const filteredEchoIdsKey = useMemo(() => filteredEchoIds.join("|"), [filteredEchoIds]);
@@ -384,6 +576,23 @@ export function EchoPoolPage() {
       setEchoFilters((prev) => ({ ...prev, mainStatKey: "all" }));
     }
   }, [echoFilters.mainStatKey, statDefs]);
+
+  useEffect(() => {
+    if (statDefs.length === 0) {
+      return;
+    }
+    const validStatKeys = new Set(statDefs.map((stat) => stat.statKey));
+    setEchoFilters((prev) => {
+      if (prev.substatStatKeys.length === 0) {
+        return prev;
+      }
+      const sanitized = prev.substatStatKeys.filter((statKey) => validStatKeys.has(statKey));
+      if (sanitized.length === prev.substatStatKeys.length) {
+        return prev;
+      }
+      return { ...prev, substatStatKeys: sanitized };
+    });
+  }, [statDefs]);
 
   useEffect(() => {
     const validIds = new Set(echoes.map((echo) => echo.echoId));
@@ -456,6 +665,23 @@ export function EchoPoolPage() {
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [presetSelectorOpen, presetNamingOpen]);
+
+  useEffect(() => {
+    if (!substatSelectorOpen) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (!(substatSelectorRef.current?.contains(target) ?? false)) {
+        setSubstatSelectorOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [substatSelectorOpen]);
 
   useEffect(() => {
     if (!presetSelectorOpen && !presetNamingOpen) {
@@ -605,7 +831,7 @@ export function EchoPoolPage() {
 
   const columnWidths = useMemo(() => {
     const total = Math.max(tableClientWidth, 1);
-    const select = 40;
+    const select = batchPanelExpanded ? 40 : 0;
     const actions = total >= 760 ? 270 : Math.max(210, Math.floor(total * 0.32));
     const remaining = Math.max(total - actions - select, 0);
     const nickname = Math.floor((remaining * 3) / 10);
@@ -622,7 +848,7 @@ export function EchoPoolPage() {
       slots,
       actions,
     };
-  }, [tableClientWidth]);
+  }, [batchPanelExpanded, tableClientWidth]);
 
   const editingEcho = useMemo(
     () => echoes.find((echo) => echo.echoId === editingEchoId) ?? null,
@@ -668,6 +894,15 @@ export function EchoPoolPage() {
     () => expectationPresets.find((preset) => preset.presetId === selectedPresetId)?.name ?? "未选择",
     [expectationPresets, selectedPresetId],
   );
+  const tableColumnCount = batchPanelExpanded ? 7 : 6;
+
+  const openBatchPanel = () => setBatchPanelExpanded(true);
+  const collapseBatchPanel = () => {
+    setBatchPanelExpanded(false);
+    setSelectedEchoIds([]);
+    setSelectionAnchorId(null);
+    setPendingBatchDelete(false);
+  };
 
   const applyEchoSelection = (echoId: string, options: { toggle: boolean; range: boolean }) => {
     const targetIndex = filteredEchoIds.indexOf(echoId);
@@ -709,9 +944,17 @@ export function EchoPoolPage() {
     if (target instanceof HTMLElement && target.closest("button, input, select, textarea, a, label")) {
       return;
     }
+    const isToggle = event.metaKey || event.ctrlKey;
+    const isRange = event.shiftKey;
+    if (!batchPanelExpanded && !isToggle && !isRange) {
+      return;
+    }
+    if (!batchPanelExpanded && (isToggle || isRange)) {
+      setBatchPanelExpanded(true);
+    }
     applyEchoSelection(echoId, {
-      toggle: event.metaKey || event.ctrlKey,
-      range: event.shiftKey,
+      toggle: isToggle,
+      range: isRange,
     });
   };
 
@@ -724,6 +967,9 @@ export function EchoPoolPage() {
   };
 
   const onToggleSelectAllVisible = (checked: boolean) => {
+    if (!batchPanelExpanded) {
+      return;
+    }
     if (!checked) {
       setSelectedEchoIds([]);
       setSelectionAnchorId(null);
@@ -1632,8 +1878,14 @@ export function EchoPoolPage() {
       <div className="card echo-table-card" ref={tableWrapRef}>
         <div className="echo-toolbar">
           <div className="echo-toolbar-group echo-filter-group">
-            <span className="echo-toolbar-title">筛选</span>
-            <label>
+            <span className="echo-toolbar-title echo-filter-title">筛选</span>
+            <input
+              className="echo-search-input"
+              value={echoFilters.searchText}
+              placeholder="搜索ID/昵称"
+              onChange={(e) => setEchoFilters((prev) => ({ ...prev, searchText: e.target.value }))}
+            />
+            <label className="echo-short-select">
               Cost
               <select
                 value={echoFilters.costClass}
@@ -1683,44 +1935,161 @@ export function EchoPoolPage() {
                 ))}
               </select>
             </label>
+            <label className="echo-short-select">
+              已开槽位
+              <select
+                value={echoFilters.openedSlots}
+                onChange={(e) =>
+                  setEchoFilters((prev) => ({ ...prev, openedSlots: e.target.value as EchoFilters["openedSlots"] }))
+                }
+              >
+                <option value="all">全部</option>
+                <option value="0">0</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+              </select>
+            </label>
+            <label>
+              副词条逻辑
+              <select
+                value={echoFilters.substatMode}
+                onChange={(e) =>
+                  setEchoFilters((prev) => ({
+                    ...prev,
+                    substatMode: sanitizeSubstatFilterMode(e.target.value),
+                  }))
+                }
+              >
+                {SUBSTAT_FILTER_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="echo-substat-selector" ref={substatSelectorRef}>
+              <button
+                type="button"
+                className={substatSelectorOpen ? "manage-btn-active" : ""}
+                onClick={() => setSubstatSelectorOpen((prev) => !prev)}
+              >
+                副词条：{echoFilters.substatStatKeys.length === 0 ? "全部" : `${echoFilters.substatStatKeys.length}项`}
+              </button>
+              {substatSelectorOpen ? (
+                <div className="echo-substat-popup">
+                  <div className="echo-substat-popup-head">
+                    <span className="hint">单击词条可选择/取消</span>
+                    <button
+                      type="button"
+                      onClick={() => setEchoFilters((prev) => ({ ...prev, substatStatKeys: [] }))}
+                      disabled={echoFilters.substatStatKeys.length === 0}
+                    >
+                      清空
+                    </button>
+                  </div>
+                  <div className="echo-substat-chip-list">
+                    {statDefs.map((stat) => {
+                      const selected = echoFilters.substatStatKeys.includes(stat.statKey);
+                      return (
+                        <button
+                          key={stat.statKey}
+                          type="button"
+                          className={selected ? "echo-substat-chip active" : "echo-substat-chip"}
+                          onClick={() =>
+                            setEchoFilters((prev) => ({
+                              ...prev,
+                              substatStatKeys: selected
+                                ? prev.substatStatKeys.filter((statKey) => statKey !== stat.statKey)
+                                : [...prev.substatStatKeys, stat.statKey],
+                            }))
+                          }
+                        >
+                          {stat.displayName}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <label>
+              排序
+              <select
+                value={echoFilters.sortBy}
+                onChange={(e) =>
+                  setEchoFilters((prev) => ({
+                    ...prev,
+                    sortBy: sanitizeEchoSortBy(e.target.value),
+                  }))
+                }
+              >
+                {ECHO_SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               type="button"
               onClick={() => setEchoFilters({ ...DEFAULT_ECHO_FILTERS })}
-              disabled={
-                echoFilters.costClass === DEFAULT_ECHO_FILTERS.costClass &&
-                echoFilters.mainStatKey === DEFAULT_ECHO_FILTERS.mainStatKey &&
-                echoFilters.status === DEFAULT_ECHO_FILTERS.status
-              }
+              disabled={isDefaultEchoFilters(echoFilters)}
             >
               重置筛选
             </button>
           </div>
 
-          <div className="echo-toolbar-group echo-batch-group">
-            <span className="echo-toolbar-title">批量</span>
-            <span className="echo-toolbar-meta">
-              已选 {selectedEchoIds.length} / 可见 {filteredEchoes.length}
-            </span>
-            <select value={batchPresetId} onChange={(e) => setBatchPresetId(e.target.value)}>
-              <option value="">选择预设</option>
-              {expectationPresets.map((preset) => (
-                <option key={preset.presetId} value={preset.presetId}>
-                  {preset.name}
-                </option>
-              ))}
-            </select>
-            <button type="button" onClick={() => void applyPresetToSelectedEchoes()} disabled={saving}>
-              批量应用预设
+          {batchPanelExpanded ? (
+            <div className="echo-toolbar-group echo-batch-group">
+              <div className="echo-batch-head-row">
+                <div className="echo-batch-head">
+                  <span className="echo-toolbar-title">批量</span>
+                  <span className="echo-toolbar-meta">
+                    已选 {selectedEchoIds.length} / 可见 {filteredEchoes.length}
+                  </span>
+                </div>
+                <button type="button" className="echo-batch-toggle-btn" onClick={collapseBatchPanel} disabled={saving}>
+                  收起
+                </button>
+              </div>
+              <select value={batchPresetId} onChange={(e) => setBatchPresetId(e.target.value)}>
+                <option value="">选择预设</option>
+                {expectationPresets.map((preset) => (
+                  <option key={preset.presetId} value={preset.presetId}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+              <button type="button" onClick={() => void applyPresetToSelectedEchoes()} disabled={saving}>
+                批量应用预设
+              </button>
+              <button type="button" onClick={() => void removeSelectedEchoes()} disabled={saving}>
+                {pendingBatchDelete ? "确认批量删除" : "批量删除"}
+              </button>
+              <div className="hover-tip">
+                <button
+                  type="button"
+                  className="hover-tip-trigger"
+                  aria-label="多选说明"
+                  title="行点击支持 Ctrl/Cmd 多选，Shift 区间选择"
+                >
+                  ?
+                </button>
+                <span className="hover-tip-content">行点击支持 Ctrl/Cmd 多选，Shift 区间选择</span>
+              </div>
+            </div>
+          ) : (
+            <button type="button" className="echo-batch-collapsed-btn" onClick={openBatchPanel}>
+              批量（点击展开）
             </button>
-            <button type="button" onClick={() => void removeSelectedEchoes()} disabled={saving}>
-              {pendingBatchDelete ? "确认批量删除" : "批量删除"}
-            </button>
-            <span className="hint">行点击支持 Ctrl/Cmd 多选，Shift 区间选择</span>
-          </div>
+          )}
         </div>
         <table className="table echo-table">
           <colgroup>
-            <col className="echo-col-select" style={{ width: `${columnWidths.select}px` }} />
+            {batchPanelExpanded ? <col className="echo-col-select" style={{ width: `${columnWidths.select}px` }} /> : null}
             <col className="echo-col-nickname" style={{ width: `${columnWidths.nickname}px` }} />
             <col className="echo-col-main" style={{ width: `${columnWidths.main}px` }} />
             <col className="echo-col-cost" style={{ width: `${columnWidths.cost}px` }} />
@@ -1730,16 +2099,18 @@ export function EchoPoolPage() {
           </colgroup>
           <thead>
             <tr>
-              <th className="echo-col-select">
-                <input
-                  ref={selectAllCheckboxRef}
-                  type="checkbox"
-                  checked={allFilteredSelected}
-                  onChange={(e) => onToggleSelectAllVisible(e.target.checked)}
-                  disabled={filteredEchoes.length === 0}
-                  title="全选当前筛选结果"
-                />
-              </th>
+              {batchPanelExpanded ? (
+                <th className="echo-col-select">
+                  <input
+                    ref={selectAllCheckboxRef}
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={(e) => onToggleSelectAllVisible(e.target.checked)}
+                    disabled={filteredEchoes.length === 0}
+                    title="全选当前筛选结果"
+                  />
+                </th>
+              ) : null}
               <th className="echo-col-nickname">昵称</th>
               <th className="echo-col-main">主词条</th>
               <th className="echo-col-cost">Cost</th>
@@ -1752,7 +2123,7 @@ export function EchoPoolPage() {
             {filteredEchoes.map((echo) => {
               const editing = editingEchoId === echo.echoId;
               const selected = selectedEchoIdSet.has(echo.echoId);
-              const rowClassName = [editing ? "active-row" : "", selected ? "selected-row" : ""]
+              const rowClassName = [editing ? "active-row" : "", batchPanelExpanded && selected ? "selected-row" : ""]
                 .filter((x) => x)
                 .join(" ");
 
@@ -1763,17 +2134,19 @@ export function EchoPoolPage() {
                     className={rowClassName || undefined}
                     onClick={(event) => onEchoRowClick(event, echo.echoId)}
                   >
-                    <td className="echo-col-select">
-                      <div className="echo-cell echo-select-cell">
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onClick={(event) => onEchoCheckboxClick(event, echo.echoId)}
-                          readOnly
-                          title="选择该声骸"
-                        />
-                      </div>
-                    </td>
+                    {batchPanelExpanded ? (
+                      <td className="echo-col-select">
+                        <div className="echo-cell echo-select-cell">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onClick={(event) => onEchoCheckboxClick(event, echo.echoId)}
+                            readOnly
+                            title="选择该声骸"
+                          />
+                        </div>
+                      </td>
+                    ) : null}
                     <td className="echo-col-nickname">
                       <div className="echo-cell">
                         {editing && basicDraft ? (
@@ -1921,7 +2294,7 @@ export function EchoPoolPage() {
                   </tr>
                   {editing && editingEcho && basicDraft ? (
                     <tr key={`${echo.echoId}-editor`} className="active-row">
-                      <td colSpan={7}>
+                      <td colSpan={tableColumnCount}>
                         <div className="inline-edit-panel">
                           <div className="chain-block">
                             <span className="chain-label">期望词条</span>
@@ -2196,7 +2569,7 @@ export function EchoPoolPage() {
             })}
             {filteredEchoes.length === 0 ? (
               <tr>
-                <td colSpan={7} className="chain-empty">
+                <td colSpan={tableColumnCount} className="chain-empty">
                   当前筛选条件下无声骸。
                 </td>
               </tr>

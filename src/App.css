@@ -698,6 +698,80 @@ button:hover {
   min-width: 104px;
 }
 
+.echo-toolbar-group label.echo-short-select {
+  min-width: 74px;
+}
+
+.echo-toolbar-group label.echo-short-select select {
+  min-width: 72px;
+  width: 72px;
+}
+
+.echo-filter-title {
+  flex-basis: 100%;
+  align-self: flex-start;
+  margin: 0 0 2px;
+}
+
+.echo-search-input {
+  min-width: 220px;
+  width: 220px;
+}
+
+.echo-substat-selector {
+  position: relative;
+  min-width: 220px;
+}
+
+.echo-substat-selector > button {
+  width: 100%;
+  text-align: left;
+}
+
+.echo-substat-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: min(460px, 78vw);
+  max-width: min(560px, 88vw);
+  max-height: 300px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+  padding: 8px;
+  z-index: var(--z-popup);
+}
+
+.echo-substat-popup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.echo-substat-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.echo-substat-chip {
+  border-style: dashed;
+  padding: 3px 7px;
+}
+
+.echo-substat-chip.active {
+  border-color: var(--accent);
+  background: #eff6ff;
+  color: var(--accent-ink);
+}
+
 .echo-toolbar-title {
   font-size: 12px;
   color: var(--muted);
@@ -716,7 +790,87 @@ button:hover {
 }
 
 .echo-batch-group {
-  flex: 1 1 460px;
+  flex: 0 1 auto;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  align-content: flex-start;
+}
+
+.echo-batch-collapsed-btn {
+  align-self: flex-start;
+  white-space: nowrap;
+  border-style: dashed;
+}
+
+.echo-batch-head-row {
+  flex: 0 0 100%;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.echo-batch-head {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 1px;
+  justify-items: start;
+}
+
+.echo-batch-head .echo-toolbar-title,
+.echo-batch-head .echo-toolbar-meta {
+  align-self: start;
+}
+
+.echo-batch-toggle-btn {
+  white-space: nowrap;
+}
+
+.hover-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  align-self: auto;
+}
+
+.hover-tip-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hover-tip-content {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: var(--z-popup);
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.95);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.24);
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.hover-tip:hover .hover-tip-content,
+.hover-tip:focus-within .hover-tip-content {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .echo-table {
@@ -838,8 +992,44 @@ button:hover {
     min-width: 96px;
   }
 
+  .echo-toolbar-group label.echo-short-select {
+    min-width: 74px;
+  }
+
+  .echo-toolbar-group label.echo-short-select select {
+    min-width: 72px;
+    width: 72px;
+  }
+
+  .echo-search-input,
+  .echo-substat-selector {
+    min-width: 100%;
+  }
+
+  .echo-search-input {
+    min-width: 100%;
+    width: 100%;
+  }
+
+  .echo-substat-popup {
+    min-width: min(420px, calc(100vw - 36px));
+    max-width: calc(100vw - 28px);
+    left: 0;
+  }
+
+  .echo-substat-chip-list {
+    max-height: 120px;
+  }
+
   .echo-actions-inline {
     flex-wrap: wrap;
+  }
+
+  .hover-tip-content {
+    right: auto;
+    left: 0;
+    width: 220px;
+    white-space: normal;
   }
 
   .preset-manager-dock {
