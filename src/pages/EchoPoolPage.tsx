@@ -37,6 +37,7 @@ interface DragState {
 }
 
 type PresetDraftSource = Pick<ExpectationPreset, "presetId" | "name" | "items">;
+type PresetCreateSource = "selector" | "manager";
 
 function buildDefaultPresetName(date = new Date()) {
   return `新预设 ${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(
@@ -62,6 +63,23 @@ function areChainsEqual(aStats: string[], aOps: RelOp[], bStats: string[], bOps:
     }
   }
   return true;
+}
+
+function findPresetByChain(
+  presets: ExpectationPreset[],
+  stats: string[],
+  ops: RelOp[],
+  excludePresetId?: string,
+): ExpectationPreset | null {
+  return (
+    presets.find((preset) => {
+      if (excludePresetId && preset.presetId === excludePresetId) {
+        return false;
+      }
+      const chain = buildExpectationChain(preset.items);
+      return areChainsEqual(stats, ops, chain.stats, chain.ops);
+    }) ?? null
+  );
 }
 
 const STAT_ABBR_MAP: Record<string, string> = {
@@ -187,6 +205,7 @@ export function EchoPoolPage() {
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const presetSelectorRef = useRef<HTMLDivElement | null>(null);
   const presetSelectorButtonRef = useRef<HTMLButtonElement | null>(null);
+  const presetManagerAddButtonRef = useRef<HTMLButtonElement | null>(null);
   const presetSelectorMenuRef = useRef<HTMLDivElement | null>(null);
   const presetNamingPopRef = useRef<HTMLFormElement | null>(null);
   const presetNamingInputRef = useRef<HTMLInputElement | null>(null);
@@ -220,6 +239,7 @@ export function EchoPoolPage() {
   const [presetSelectorOpen, setPresetSelectorOpen] = useState(false);
   const [presetNamingOpen, setPresetNamingOpen] = useState(false);
   const [presetNamingValue, setPresetNamingValue] = useState("");
+  const [presetCreateSource, setPresetCreateSource] = useState<PresetCreateSource>("selector");
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [presetPopoverPos, setPresetPopoverPos] = useState({ left: 8, top: 8, width: 240 });
   const [presetManagerExpanded, setPresetManagerExpanded] = useState(false);
@@ -232,7 +252,10 @@ export function EchoPoolPage() {
   const [toast, setToast] = useState<{ id: number; text: string; kind: ToastKind } | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const syncPresetPopoverPosition = () => {
-    const trigger = presetSelectorButtonRef.current;
+    const trigger =
+      presetCreateSource === "manager"
+        ? presetManagerAddButtonRef.current ?? presetSelectorButtonRef.current
+        : presetSelectorButtonRef.current ?? presetManagerAddButtonRef.current;
     if (!trigger) {
       return;
     }
@@ -299,7 +322,8 @@ export function EchoPoolPage() {
       const inTrigger = presetSelectorRef.current?.contains(target) ?? false;
       const inMenu = presetSelectorMenuRef.current?.contains(target) ?? false;
       const inNaming = presetNamingPopRef.current?.contains(target) ?? false;
-      if (!inTrigger && !inMenu && !inNaming) {
+      const inManagerAdd = presetManagerAddButtonRef.current?.contains(target) ?? false;
+      if (!inTrigger && !inMenu && !inNaming && !inManagerAdd) {
         setPresetSelectorOpen(false);
         setPresetNamingOpen(false);
       }
@@ -338,27 +362,19 @@ export function EchoPoolPage() {
   }, [presetNamingOpen]);
 
   useEffect(() => {
-    if (!selectedPresetId) {
+    if (!editingEchoId) {
+      if (selectedPresetId !== null) {
+        setSelectedPresetId(null);
+      }
       return;
     }
-    if (!expectationPresets.some((preset) => preset.presetId === selectedPresetId)) {
-      setSelectedPresetId(null);
-    }
-  }, [expectationPresets, selectedPresetId]);
 
-  useEffect(() => {
-    if (!selectedPresetId) {
-      return;
+    const matchedPreset = findPresetByChain(expectationPresets, expectationStats, expectationOps);
+    const matchedPresetId = matchedPreset?.presetId ?? null;
+    if (selectedPresetId !== matchedPresetId) {
+      setSelectedPresetId(matchedPresetId);
     }
-    const selectedPreset = expectationPresets.find((preset) => preset.presetId === selectedPresetId);
-    if (!selectedPreset) {
-      return;
-    }
-    const chain = buildExpectationChain(selectedPreset.items);
-    if (!areChainsEqual(expectationStats, expectationOps, chain.stats, chain.ops)) {
-      setSelectedPresetId(null);
-    }
-  }, [expectationStats, expectationOps, expectationPresets, selectedPresetId]);
+  }, [editingEchoId, expectationStats, expectationOps, expectationPresets, selectedPresetId]);
 
   useEffect(() => {
     if (!dragState) {
@@ -464,7 +480,7 @@ export function EchoPoolPage() {
 
   const columnWidths = useMemo(() => {
     const total = Math.max(tableClientWidth, 1);
-    const actions = total >= 760 ? 220 : Math.max(160, Math.floor(total * 0.28));
+    const actions = total >= 760 ? 270 : Math.max(210, Math.floor(total * 0.32));
     const remaining = Math.max(total - actions, 0);
     const nickname = Math.floor((remaining * 3) / 10);
     const main = Math.floor(remaining / 10);
@@ -777,12 +793,22 @@ export function EchoPoolPage() {
     setPresetManagerExpanded(true);
   };
 
-  const openCreatePresetNaming = () => {
+  const cancelPresetEdit = () => {
+    setPresetDraftId(null);
+    setPresetDraftName("");
+    setPresetDraftStats([]);
+    setPresetDraftOps([]);
+    setActivePresetIndex(null);
+    setPendingDeletePresetId(null);
+  };
+
+  const openCreatePresetNaming = (source: PresetCreateSource = "selector") => {
     if (!editingEcho) {
       setMessage("请先点击某条声骸的“管理”，再设为预设。");
       return;
     }
     setPresetSelectorOpen(false);
+    setPresetCreateSource(source);
     setPresetNamingValue(buildDefaultPresetName());
     setPresetNamingOpen(true);
     window.requestAnimationFrame(() => syncPresetPopoverPosition());
@@ -804,6 +830,18 @@ export function EchoPoolPage() {
       return;
     }
 
+    const existingPreset = findPresetByChain(expectationPresets, expectationStats, expectationOps);
+    if (existingPreset) {
+      setSelectedPresetId(existingPreset.presetId);
+      setPresetNamingOpen(false);
+      setPresetSelectorOpen(false);
+      if (presetCreateSource === "manager") {
+        openPresetEditor(existingPreset);
+      }
+      setMessage(`已存在相同内容的预设「${existingPreset.name}」，已自动选中。`);
+      return;
+    }
+
     const generatedName = presetNamingValue.trim() || buildDefaultPresetName();
 
     setSaving(true);
@@ -817,6 +855,13 @@ export function EchoPoolPage() {
       setSelectedPresetId(result.presetId);
       setPresetNamingOpen(false);
       setPresetSelectorOpen(false);
+      if (presetCreateSource === "manager") {
+        openPresetEditor({
+          presetId: result.presetId,
+          name: generatedName,
+          items,
+        });
+      }
       setMessage(`已设为预设「${generatedName}」。`, "success");
     } catch (error) {
       setMessage(String(error), "error");
@@ -896,14 +941,13 @@ export function EchoPoolPage() {
     setSaving(true);
     setMessage("");
     try {
-      const result = await saveExpectationPreset({
+      await saveExpectationPreset({
         presetId: presetDraftId ?? undefined,
         name,
         items: chainToExpectationItems(presetDraftStats, presetDraftOps),
       });
       await refreshExpectationPresets();
-      setPresetDraftId(result.presetId);
-      setPendingDeletePresetId(null);
+      cancelPresetEdit();
       setMessage("预设已保存。", "success");
     } catch (error) {
       setMessage(String(error), "error");
@@ -916,7 +960,7 @@ export function EchoPoolPage() {
   const removePreset = async (presetId: string) => {
     if (pendingDeletePresetId !== presetId) {
       setPendingDeletePresetId(presetId);
-      setMessage("再次点击“删除预设”以确认。");
+      setMessage("再次点击“删除”以确认。");
       return;
     }
 
@@ -948,169 +992,213 @@ export function EchoPoolPage() {
   const renderPresetManager = () => (
     <div className="chain-block">
       <span className="chain-label">预设列表</span>
-      {expectationPresets.length === 0 ? (
-        <p className="hint">暂无预设，可在声骸条目“预设”里设为预设。</p>
-      ) : (
-        <table className="table compact-table preset-table">
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>词条</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {expectationPresets.map((preset) => (
-              <tr key={preset.presetId}>
-                <td>{preset.name}</td>
-                <td>{formatPresetSummary(preset.items)}</td>
-                <td>
-                  <div className="inline-row">
-                    <button type="button" onClick={() => openPresetEditor(preset)} disabled={saving}>
-                      编辑
-                    </button>
-                    <button type="button" onClick={() => void removePreset(preset.presetId)} disabled={saving}>
-                      {pendingDeletePresetId === preset.presetId ? "确认删除预设" : "删除预设"}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <table className="table compact-table preset-table">
+        <colgroup>
+          <col className="preset-col-name" />
+          <col className="preset-col-items" />
+          <col className="preset-col-actions" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>词条</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {expectationPresets.map((preset) => {
+            const editing = presetDraftId === preset.presetId;
 
-      {presetDraftId ? (
-        <div className="chain-block">
-          <span className="chain-label">预设管理</span>
-          <label>
-            名称
-            <input
-              value={presetDraftName}
-              onChange={(e) => setPresetDraftName(e.target.value)}
-              placeholder="预设名称"
-            />
-          </label>
-          <div className="chain-row" ref={presetRowRef}>
-            {presetDraftStats.length === 0 ? <span className="chain-empty">无</span> : null}
-            {presetDraftStats.map((statKey, idx) => {
-              if (draggingPresetFromIndex === idx) {
-                return null;
-              }
-              const stat = statMap.get(statKey);
-              const selected = activePresetIndex === idx;
-              const availableStats = statDefs.filter(
-                (x) => x.statKey === statKey || !presetDraftStats.includes(x.statKey),
-              );
-              const hideOperator =
-                draggingPresetFromIndex !== null &&
-                (idx === draggingPresetFromIndex || idx + 1 === draggingPresetFromIndex);
-
-              return (
-                <Fragment key={`preset-${idx}-${statKey}`}>
-                  {presetInsertBeforeIndex === idx ? <span className="drag-insert-line" aria-hidden="true" /> : null}
-                  <div className="chain-fragment">
-                    <div
-                      className={selected ? "chain-item active" : "chain-item"}
-                      data-drag-kind="preset"
-                      data-drag-index={idx}
-                      onClick={() => setActivePresetIndex(idx)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        removePresetStatAt(idx);
-                      }}
-                      title="单击编辑，右键删除"
-                    >
-                      <button
-                        type="button"
-                        className="drag-handle"
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          setDragState({
-                            kind: "preset",
-                            fromIndex: idx,
-                            dropIndex: idx,
-                            pointerId: e.pointerId,
-                            x: e.clientX,
-                            y: e.clientY,
-                            label: stat?.displayName ?? statKey,
-                          });
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        title="按住拖动排序"
-                      >
-                        ::
-                      </button>
-                      {selected ? (
-                        <select
-                          value={statKey}
-                          onChange={(e) => {
-                            const next = e.target.value;
-                            setPresetDraftStats((prev) =>
-                              prev.map((item, itemIdx) => (itemIdx === idx ? next : item)),
-                            );
-                          }}
-                        >
-                          {availableStats.map((s) => (
-                            <option key={s.statKey} value={s.statKey}>
-                              {s.displayName}
-                            </option>
-                          ))}
-                        </select>
+            return (
+              <Fragment key={preset.presetId}>
+                <tr className={editing ? "active-row" : ""}>
+                  <td className="preset-col-name">
+                    <div className="preset-cell">
+                      {editing ? (
+                        <input
+                          className="preset-row-name-input preset-cell-control"
+                          value={presetDraftName}
+                          onChange={(e) => setPresetDraftName(e.target.value)}
+                          placeholder="预设名称"
+                        />
                       ) : (
-                        <span>{stat?.displayName ?? statKey}</span>
+                        <span className="preset-cell-display" title={preset.name}>
+                          {preset.name}
+                        </span>
                       )}
                     </div>
-                    {idx < presetDraftOps.length && !hideOperator ? (
+                  </td>
+                  <td className="preset-col-items">
+                    <div className="preset-cell">
+                      {editing ? (
+                        <span className="preset-cell-display hint">在下方编辑词条链</span>
+                      ) : (
+                        <span className="preset-cell-display" title={formatPresetSummary(preset.items)}>
+                          {formatPresetSummary(preset.items)}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="preset-col-actions">
+                    <div className="inline-row preset-actions-inline">
                       <button
                         type="button"
-                        className="chain-op"
-                        onClick={() =>
-                          setPresetDraftOps((prev) =>
-                            prev.map((x, opIdx) => (opIdx === idx ? (x === "gt" ? "eq" : "gt") : x)),
-                          )
-                        }
-                        title="点击切换 > 或 ="
+                        className={editing ? "preset-action-btn manage-btn-active" : "preset-action-btn"}
+                        onClick={() => {
+                          if (editing) {
+                            return;
+                          }
+                          openPresetEditor(preset);
+                        }}
+                        disabled={saving}
                       >
-                        {presetDraftOps[idx] === "gt" ? ">" : "="}
+                        管理
                       </button>
-                    ) : null}
-                  </div>
-                </Fragment>
-              );
-            })}
-            {dragState?.kind === "preset" && presetInsertBeforeIndex === null ? (
-              <span className="drag-insert-line" aria-hidden="true" />
-            ) : null}
-            <button type="button" className="chain-add" onClick={addPresetStat}>
-              +
-            </button>
-          </div>
-          <div className="inline-row">
-            <button type="button" onClick={() => void savePresetDraft()} disabled={saving}>
-              保存预设
-            </button>
-            <button type="button" onClick={() => void removePreset(presetDraftId)} disabled={saving}>
-              {pendingDeletePresetId === presetDraftId ? "确认删除预设" : "删除预设"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPresetDraftId(null);
-                setPresetDraftName("");
-                setPresetDraftStats([]);
-                setPresetDraftOps([]);
-                setActivePresetIndex(null);
-                setPendingDeletePresetId(null);
-              }}
-              disabled={saving}
-            >
-              取消管理
-            </button>
-          </div>
-        </div>
-      ) : null}
+                      {editing ? (
+                        <>
+                          <button type="button" className="preset-action-btn" onClick={cancelPresetEdit} disabled={saving}>
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            className="preset-action-btn"
+                            onClick={() => void savePresetDraft()}
+                            disabled={saving}
+                          >
+                            保存
+                          </button>
+                        </>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="preset-action-btn"
+                        onClick={() => void removePreset(preset.presetId)}
+                        disabled={saving}
+                      >
+                        {pendingDeletePresetId === preset.presetId ? "确认删除" : "删除"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {editing ? (
+                  <tr className="active-row">
+                    <td colSpan={3}>
+                      <div className="chain-block">
+                        <span className="chain-label">预设词条</span>
+                        <div className="chain-row" ref={presetRowRef}>
+                          {presetDraftStats.length === 0 ? <span className="chain-empty">无</span> : null}
+                          {presetDraftStats.map((statKey, idx) => {
+                            if (draggingPresetFromIndex === idx) {
+                              return null;
+                            }
+                            const stat = statMap.get(statKey);
+                            const selected = activePresetIndex === idx;
+                            const availableStats = statDefs.filter(
+                              (x) => x.statKey === statKey || !presetDraftStats.includes(x.statKey),
+                            );
+                            const hideOperator =
+                              draggingPresetFromIndex !== null &&
+                              (idx === draggingPresetFromIndex || idx + 1 === draggingPresetFromIndex);
+
+                            return (
+                              <Fragment key={`preset-${idx}-${statKey}`}>
+                                {presetInsertBeforeIndex === idx ? (
+                                  <span className="drag-insert-line" aria-hidden="true" />
+                                ) : null}
+                                <div className="chain-fragment">
+                                  <div
+                                    className={selected ? "chain-item active" : "chain-item"}
+                                    data-drag-kind="preset"
+                                    data-drag-index={idx}
+                                    onClick={() => setActivePresetIndex(idx)}
+                                    onContextMenu={(e) => {
+                                      e.preventDefault();
+                                      removePresetStatAt(idx);
+                                    }}
+                                    title="单击编辑，右键删除"
+                                  >
+                                    <button
+                                      type="button"
+                                      className="drag-handle"
+                                      onPointerDown={(e) => {
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        setDragState({
+                                          kind: "preset",
+                                          fromIndex: idx,
+                                          dropIndex: idx,
+                                          pointerId: e.pointerId,
+                                          x: e.clientX,
+                                          y: e.clientY,
+                                          label: stat?.displayName ?? statKey,
+                                        });
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                      title="按住拖动排序"
+                                    >
+                                      ::
+                                    </button>
+                                    {selected ? (
+                                      <select
+                                        value={statKey}
+                                        onChange={(e) => {
+                                          const next = e.target.value;
+                                          setPresetDraftStats((prev) =>
+                                            prev.map((item, itemIdx) => (itemIdx === idx ? next : item)),
+                                          );
+                                        }}
+                                      >
+                                        {availableStats.map((s) => (
+                                          <option key={s.statKey} value={s.statKey}>
+                                            {s.displayName}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <span>{stat?.displayName ?? statKey}</span>
+                                    )}
+                                  </div>
+                                  {idx < presetDraftOps.length && !hideOperator ? (
+                                    <button
+                                      type="button"
+                                      className="chain-op"
+                                      onClick={() =>
+                                        setPresetDraftOps((prev) =>
+                                          prev.map((x, opIdx) => (opIdx === idx ? (x === "gt" ? "eq" : "gt") : x)),
+                                        )
+                                      }
+                                      title="点击切换 > 或 ="
+                                    >
+                                      {presetDraftOps[idx] === "gt" ? ">" : "="}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </Fragment>
+                            );
+                          })}
+                          {dragState?.kind === "preset" && presetInsertBeforeIndex === null ? (
+                            <span className="drag-insert-line" aria-hidden="true" />
+                          ) : null}
+                          <button type="button" className="chain-add" onClick={addPresetStat}>
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
+            );
+          })}
+          {expectationPresets.length === 0 ? (
+            <tr>
+              <td colSpan={3} className="chain-empty">
+                暂无预设，可在声骸条目“预设”里设为预设。
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
     </div>
   );
 
@@ -1138,6 +1226,12 @@ export function EchoPoolPage() {
     }
   };
 
+  const closePresetManagerView = () => {
+    setPresetManagerExpanded(false);
+    setPresetNamingOpen(false);
+    setPresetSelectorOpen(false);
+  };
+
   return (
     <section className="page">
       {toast ? <div className={`toast toast-${toast.kind}`}>{toast.text}</div> : null}
@@ -1149,23 +1243,37 @@ export function EchoPoolPage() {
       ) : null}
 
       <div className="preset-manager-dock">
-        {presetManagerExpanded ? (
-          <div className="card preset-manager-panel">
-            <div className="preset-manager-head">
-              <strong>期望预设管理</strong>
-              <button type="button" onClick={() => setPresetManagerExpanded(false)}>
-                收起
-              </button>
-            </div>
-            {renderPresetManager()}
-          </div>
-        ) : (
+        {!presetManagerExpanded ? (
           <button type="button" className="preset-manager-tab" onClick={() => setPresetManagerExpanded(true)}>
             <span>期望预设管理</span>
             <span className="preset-manager-tab-icon">◀</span>
           </button>
-        )}
+        ) : null}
       </div>
+
+      {presetManagerExpanded ? (
+        <div className="preset-manager-overlay" onClick={closePresetManagerView}>
+          <div className="card preset-manager-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="preset-manager-head">
+              <strong>期望预设管理</strong>
+              <div className="preset-manager-head-actions">
+                <button
+                  type="button"
+                  ref={presetManagerAddButtonRef}
+                  className="preset-manager-add-btn"
+                  onClick={() => openCreatePresetNaming("manager")}
+                >
+                  +
+                </button>
+                <button type="button" onClick={closePresetManagerView}>
+                  收起
+                </button>
+              </div>
+            </div>
+            {renderPresetManager()}
+          </div>
+        </div>
+      ) : null}
 
       {presetSelectorOpen ? (
         <div
@@ -1193,7 +1301,7 @@ export function EchoPoolPage() {
           <button
             type="button"
             className="preset-create-option"
-            onClick={openCreatePresetNaming}
+            onClick={() => openCreatePresetNaming("selector")}
             disabled={saving}
           >
             设为预设
@@ -1362,7 +1470,7 @@ export function EchoPoolPage() {
                       <div className="inline-row echo-actions-inline">
                         <button
                           type="button"
-                          className={editing ? "manage-btn-active" : ""}
+                          className={editing ? "echo-action-btn manage-btn-active" : "echo-action-btn"}
                           onClick={() => {
                             if (editing) {
                               return;
@@ -1374,15 +1482,25 @@ export function EchoPoolPage() {
                         </button>
                         {editing ? (
                           <>
-                            <button type="button" onClick={cancelEdit} disabled={saving}>
+                            <button type="button" className="echo-action-btn" onClick={cancelEdit} disabled={saving}>
                               取消
                             </button>
-                            <button type="button" onClick={() => void saveEdit()} disabled={saving}>
+                            <button
+                              type="button"
+                              className="echo-action-btn"
+                              onClick={() => void saveEdit()}
+                              disabled={saving}
+                            >
                               保存
                             </button>
                           </>
                         ) : null}
-                        <button type="button" onClick={() => void removeEcho(echo.echoId)} disabled={saving}>
+                        <button
+                          type="button"
+                          className="echo-action-btn echo-delete-btn"
+                          onClick={() => void removeEcho(echo.echoId)}
+                          disabled={saving}
+                        >
                           {pendingDeleteEchoId === echo.echoId ? "确认删除" : "删除"}
                         </button>
                       </div>

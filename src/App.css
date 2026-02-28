@@ -225,7 +225,7 @@ button:hover {
 .preset-manager-dock {
   position: fixed;
   top: 68px;
-  right: 8px;
+  right: 0;
   z-index: 2100;
   pointer-events: none;
 }
@@ -237,25 +237,31 @@ button:hover {
 
 .preset-manager-tab {
   display: inline-flex;
+  justify-content: center;
   align-items: center;
   gap: 6px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
   min-height: 148px;
+  min-width: 46px;
+  padding: 12px 10px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.25;
   border-radius: 8px 0 0 8px;
   border-right: 0;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
 }
 
 .preset-manager-tab-icon {
-  font-size: 11px;
+  font-size: 12px;
   opacity: 0.8;
 }
 
 .preset-manager-panel {
-  width: min(700px, calc(100vw - 26px));
-  max-height: min(82vh, 860px);
-  overflow: auto;
+  width: min(1240px, calc(100vw - 36px));
+  max-width: 100%;
+  overflow: visible;
   box-shadow: 0 16px 30px rgba(15, 23, 42, 0.2);
 }
 
@@ -265,6 +271,85 @@ button:hover {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.preset-manager-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preset-manager-add-btn {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.preset-manager-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2350;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.22);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: auto;
+}
+
+.preset-actions-inline {
+  flex-wrap: nowrap;
+}
+
+.preset-action-btn {
+  white-space: nowrap;
+}
+
+.preset-row-name-input {
+  width: 100%;
+  max-width: 100%;
+}
+
+.preset-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.preset-col-name {
+  width: 240px;
+}
+
+.preset-col-actions {
+  width: 260px;
+}
+
+.preset-cell {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+}
+
+.preset-cell-display {
+  display: block;
+  width: 100%;
+  line-height: 30px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preset-cell-control {
+  width: 100%;
+  min-height: 30px;
+  line-height: 1.2;
+}
+
+.preset-table th:last-child,
+.preset-table td:last-child {
+  width: 1%;
+  white-space: nowrap;
 }
 
 .preset-selector {
@@ -625,6 +710,15 @@ button:hover {
   justify-content: flex-start;
 }
 
+.echo-action-btn {
+  min-width: 52px;
+  white-space: nowrap;
+}
+
+.echo-delete-btn {
+  min-width: 76px;
+}
+
 .chart {
   width: 100%;
   min-height: 240px;
@@ -677,19 +771,26 @@ button:hover {
 
   .preset-manager-dock {
     top: 54px;
-    right: 6px;
+    right: 0;
   }
 
   .preset-manager-tab {
     writing-mode: horizontal-tb;
     min-height: auto;
+    min-width: auto;
+    padding: 6px 10px;
+    font-size: 13px;
+    line-height: 1.2;
     border-right: 1px solid var(--line);
     border-radius: 8px;
   }
 
   .preset-manager-panel {
     width: calc(100vw - 12px);
-    max-height: 74vh;
+  }
+
+  .preset-manager-overlay {
+    padding: 8px 6px;
   }
 }
 
