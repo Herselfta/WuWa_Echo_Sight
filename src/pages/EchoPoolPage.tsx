@@ -2303,8 +2303,7 @@ export function EchoPoolPage() {
                                   className={slot.source === "ordered_event" ? "slot-pill slot-pill-locked" : "slot-pill"}
                                   title={`${slot.slotNo}: ${statMap.get(slot.statKey)?.displayName ?? slot.statKey} ${formatTierLabel(slot.statKey, slot.tierIndex)}`}
                                 >
-                                  {slot.slotNo}: {statKeyToAbbr(slot.statKey)}
-                                  {slot.tierIndex}
+                                  {slot.slotNo}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(statMap.get(slot.statKey)?.unit ?? "flat", slot.valueScaled)}
                                 </span>
                               ))
                           )}

@@ -130,7 +130,7 @@ export function RecordPage() {
   const statMap = useMemo(() => new Map(statDefs.map((x) => [x.statKey, x])), [statDefs]);
 
   /* === create echo form === */
-  const [createExpanded, setCreateExpanded] = useState(false);
+  const [createExpanded, setCreateExpanded] = useState(true);
   const [createNickname, setCreateNickname] = useState("");
   const [createMainStat, setCreateMainStat] = useState("atk_pct");
   const [createCost, setCreateCost] = useState<number>(1);
@@ -154,7 +154,6 @@ export function RecordPage() {
 
   /* === record event === */
   const [selectedEchoId, setSelectedEchoId] = useState<string>("");
-  const [slotNo, setSlotNo] = useState<number>(1);
   const [statKey, setStatKey] = useState<string>("crit_rate");
   const [tierIndex, setTierIndex] = useState<number>(1);
   const [eventTimeLocal, setEventTimeLocal] = useState<string>(toLocalInputValue(new Date()));
@@ -197,6 +196,7 @@ export function RecordPage() {
   );
 
   const availableSlots = useMemo(() => [1, 2, 3, 4, 5].filter((x) => !occupiedSlots.has(x)), [occupiedSlots]);
+  const nextSlotNo = availableSlots[0] ?? 1;
 
   const availableStatDefs = useMemo(
     () => statDefs.filter((s) => !occupiedStats.has(s.statKey)),
@@ -225,10 +225,6 @@ export function RecordPage() {
   useEffect(() => {
     if (!selectedEchoId && echoes.length > 0) setSelectedEchoId(echoes[0].echoId);
   }, [echoes, selectedEchoId]);
-
-  useEffect(() => {
-    if (availableSlots.length > 0 && !availableSlots.includes(slotNo)) setSlotNo(availableSlots[0]);
-  }, [availableSlots, slotNo]);
 
   useEffect(() => {
     if (!selectedStat) return;
@@ -396,15 +392,10 @@ export function RecordPage() {
 
   const resetCreateForm = () => {
     setCreateNickname("");
-    setCreateMainStat(statDefs[0]?.statKey ?? "atk_pct");
-    setCreateCost(1);
     setCreateStatus("tracking");
-    setCreateExpStats([]);
-    setCreateExpOps([]);
-    setCreateActiveExpIdx(null);
     setCreateSlots([]);
     setCreateActiveSlotIdx(null);
-    setCreatePresetId(null);
+    setCreateActiveExpIdx(null);
     setCreatePresetNamingOpen(false);
     setCreatePresetNamingValue("");
   };
@@ -459,7 +450,7 @@ export function RecordPage() {
   const handleRecordEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedEchoId) { showMsg("请先选择声骸。"); return; }
-    if (!availableSlots.includes(slotNo)) { showMsg("当前槽位不可用。"); return; }
+    if (availableSlots.length === 0) { showMsg("所有槽位已满。"); return; }
     if (!selectedStat) { showMsg("没有可出的副词条。"); return; }
 
     setSaving(true);
@@ -468,7 +459,7 @@ export function RecordPage() {
     try {
       const result = await appendOrderedEvent({
         echoId: selectedEchoId,
-        slotNo,
+        slotNo: nextSlotNo,
         statKey: selectedStat.statKey,
         tierIndex,
         eventTime: normalizeLocalTime(eventTimeLocal),
@@ -816,8 +807,7 @@ export function RecordPage() {
                           className={`slot-pill ${slot.source === "ordered_event" ? "slot-pill-locked" : ""}`}
                           title={`${st?.displayName ?? slot.statKey} 档${slot.tierIndex}：${formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}`}
                         >
-                          {slot.slotNo}: {statKeyToAbbr(slot.statKey)}
-                          <small className="slot-pill-value"> 档{slot.tierIndex}</small>
+                          {slot.slotNo}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}
                         </span>
                       );
                     })
@@ -879,15 +869,6 @@ export function RecordPage() {
 
             {/* 录入字段 - 紧凑布局 */}
             <div className="record-event-fields">
-              <label className="record-field record-field-short">
-                <span className="record-field-label">槽位</span>
-                <select value={slotNo} onChange={(e) => setSlotNo(Number(e.target.value))}>
-                  {availableSlots.map((x) => (
-                    <option key={x} value={x}>S{x}</option>
-                  ))}
-                </select>
-              </label>
-
               <label className="record-field">
                 <span className="record-field-label">词条</span>
                 <select value={selectedStat?.statKey ?? ""} onChange={(e) => setStatKey(e.target.value)}>
@@ -923,7 +904,7 @@ export function RecordPage() {
               <span className="record-preview-value">
                 {selectedStat ? (
                   <>
-                    {selectedStat.displayName} 档{tierIndex} = {formatScaledValue(selectedStat.unit, selectedTierValue)}
+                    S{nextSlotNo} {selectedStat.displayName} 档{tierIndex} = {formatScaledValue(selectedStat.unit, selectedTierValue)}
                   </>
                 ) : "—"}
               </span>
