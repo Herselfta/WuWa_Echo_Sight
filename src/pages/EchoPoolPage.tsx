@@ -950,16 +950,16 @@ export function EchoPoolPage() {
     if (target instanceof HTMLElement && target.closest("button, input, select, textarea, a, label")) {
       return;
     }
-    const isToggle = event.metaKey || event.ctrlKey;
+    const isModifierToggle = event.metaKey || event.ctrlKey;
     const isRange = event.shiftKey;
-    if (!batchPanelExpanded && !isToggle && !isRange) {
+    if (!batchPanelExpanded && !isModifierToggle && !isRange) {
       return;
     }
-    if (!batchPanelExpanded && (isToggle || isRange)) {
+    if (!batchPanelExpanded && (isModifierToggle || isRange)) {
       setBatchPanelExpanded(true);
     }
     applyEchoSelection(echoId, {
-      toggle: isToggle,
+      toggle: batchPanelExpanded ? (isRange ? isModifierToggle : true) : isModifierToggle,
       range: isRange,
     });
     clearNativeTextSelection();
@@ -1927,7 +1927,7 @@ export function EchoPoolPage() {
                       </span>
                     </div>
                     <select
-                      className="echo-toolbar-control"
+                      className="echo-toolbar-control echo-batch-preset-select"
                       value={batchPresetId}
                       onChange={(e) => setBatchPresetId(e.target.value)}
                     >
@@ -1959,11 +1959,12 @@ export function EchoPoolPage() {
                         type="button"
                         className="hover-tip-trigger"
                         aria-label="多选说明"
-                        title="行点击支持 Ctrl/Cmd 多选，Shift 区间选择"
                       >
                         ?
                       </button>
-                      <span className="hover-tip-content">行点击支持 Ctrl/Cmd 多选，Shift 区间选择</span>
+                      <span className="hover-tip-content">
+                        展开批量后可直接单击多选；收起时 Ctrl/Cmd 或 Shift 可触发批量模式
+                      </span>
                     </div>
                   </>
                 ) : null}
