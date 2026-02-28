@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   deleteEcho,
   deleteExpectationPreset,
@@ -38,6 +38,53 @@ interface DragState {
 
 type PresetDraftSource = Pick<ExpectationPreset, "presetId" | "name" | "items">;
 type PresetCreateSource = "selector" | "manager";
+interface EchoFilters {
+  costClass: "all" | "1" | "3" | "4";
+  mainStatKey: string;
+  status: "all" | EchoStatus;
+}
+
+const ECHO_FILTER_STORAGE_KEY = "wuwa.echo-pool.filters.v1";
+const DEFAULT_ECHO_FILTERS: EchoFilters = {
+  costClass: "all",
+  mainStatKey: "all",
+  status: "all",
+};
+const ECHO_STATUS_OPTIONS: EchoStatus[] = ["tracking", "paused", "abandoned", "completed"];
+
+function parseEchoFilters(raw: string | null): EchoFilters {
+  if (!raw) {
+    return { ...DEFAULT_ECHO_FILTERS };
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<EchoFilters>;
+    const costClass =
+      parsed.costClass === "1" || parsed.costClass === "3" || parsed.costClass === "4"
+        ? parsed.costClass
+        : "all";
+    const mainStatKey = typeof parsed.mainStatKey === "string" && parsed.mainStatKey.trim()
+      ? parsed.mainStatKey
+      : "all";
+    const status =
+      typeof parsed.status === "string" && (parsed.status === "all" || ECHO_STATUS_OPTIONS.includes(parsed.status as EchoStatus))
+        ? parsed.status
+        : "all";
+    return {
+      costClass,
+      mainStatKey,
+      status,
+    };
+  } catch {
+    return { ...DEFAULT_ECHO_FILTERS };
+  }
+}
+
+function loadEchoFilters(): EchoFilters {
+  if (typeof window === "undefined") {
+    return { ...DEFAULT_ECHO_FILTERS };
+  }
+  return parseEchoFilters(window.localStorage.getItem(ECHO_FILTER_STORAGE_KEY));
+}
 
 function buildDefaultPresetName(date = new Date()) {
   return `新预设 ${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(
@@ -209,6 +256,7 @@ export function EchoPoolPage() {
   const presetSelectorMenuRef = useRef<HTMLDivElement | null>(null);
   const presetNamingPopRef = useRef<HTMLFormElement | null>(null);
   const presetNamingInputRef = useRef<HTMLInputElement | null>(null);
+  const selectAllCheckboxRef = useRef<HTMLInputElement | null>(null);
   const expectationRowRef = useRef<HTMLDivElement | null>(null);
   const slotRowRef = useRef<HTMLDivElement | null>(null);
   const presetRowRef = useRef<HTMLDivElement | null>(null);
@@ -247,10 +295,47 @@ export function EchoPoolPage() {
   const [presetDraftName, setPresetDraftName] = useState("");
   const [presetDraftStats, setPresetDraftStats] = useState<string[]>([]);
   const [presetDraftOps, setPresetDraftOps] = useState<RelOp[]>([]);
+  const [echoFilters, setEchoFilters] = useState<EchoFilters>(() => loadEchoFilters());
+  const [selectedEchoIds, setSelectedEchoIds] = useState<string[]>([]);
+  const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
+  const [batchPresetId, setBatchPresetId] = useState("");
+  const [pendingBatchDelete, setPendingBatchDelete] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string; kind: ToastKind } | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
+  const filteredEchoes = useMemo(
+    () =>
+      echoes.filter((echo) => {
+        if (echoFilters.costClass !== "all" && String(echo.costClass) !== echoFilters.costClass) {
+          return false;
+        }
+        if (echoFilters.mainStatKey !== "all" && echo.mainStatKey !== echoFilters.mainStatKey) {
+          return false;
+        }
+        if (echoFilters.status !== "all" && echo.status !== echoFilters.status) {
+          return false;
+        }
+        return true;
+      }),
+    [echoes, echoFilters],
+  );
+  const filteredEchoIds = useMemo(() => filteredEchoes.map((echo) => echo.echoId), [filteredEchoes]);
+  const filteredEchoIdsKey = useMemo(() => filteredEchoIds.join("|"), [filteredEchoIds]);
+  const selectedEchoIdSet = useMemo(() => new Set(selectedEchoIds), [selectedEchoIds]);
+  const allFilteredSelected = useMemo(
+    () => filteredEchoIds.length > 0 && filteredEchoIds.every((echoId) => selectedEchoIdSet.has(echoId)),
+    [filteredEchoIds, selectedEchoIdSet],
+  );
+  const someFilteredSelected = useMemo(
+    () => filteredEchoIds.some((echoId) => selectedEchoIdSet.has(echoId)),
+    [filteredEchoIds, selectedEchoIdSet],
+  );
+  const selectedBatchPreset = useMemo(
+    () => expectationPresets.find((preset) => preset.presetId === batchPresetId) ?? null,
+    [expectationPresets, batchPresetId],
+  );
+
   const syncPresetPopoverPosition = () => {
     const trigger =
       presetCreateSource === "manager"
@@ -283,6 +368,46 @@ export function EchoPoolPage() {
     }, 2600);
     return () => window.clearTimeout(timeoutId);
   }, [toast]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(ECHO_FILTER_STORAGE_KEY, JSON.stringify(echoFilters));
+  }, [echoFilters]);
+
+  useEffect(() => {
+    if (echoFilters.mainStatKey === "all") {
+      return;
+    }
+    if (!statDefs.some((stat) => stat.statKey === echoFilters.mainStatKey)) {
+      setEchoFilters((prev) => ({ ...prev, mainStatKey: "all" }));
+    }
+  }, [echoFilters.mainStatKey, statDefs]);
+
+  useEffect(() => {
+    const validIds = new Set(echoes.map((echo) => echo.echoId));
+    setSelectedEchoIds((prev) => prev.filter((echoId) => validIds.has(echoId)));
+    setSelectionAnchorId((prev) => (prev && validIds.has(prev) ? prev : null));
+  }, [echoes]);
+
+  useEffect(() => {
+    const visibleIds = new Set(filteredEchoIds);
+    setSelectedEchoIds((prev) => prev.filter((echoId) => visibleIds.has(echoId)));
+    setSelectionAnchorId((prev) => (prev && visibleIds.has(prev) ? prev : null));
+  }, [filteredEchoIdsKey, filteredEchoIds]);
+
+  useEffect(() => {
+    const checkbox = selectAllCheckboxRef.current;
+    if (!checkbox) {
+      return;
+    }
+    checkbox.indeterminate = !allFilteredSelected && someFilteredSelected;
+  }, [allFilteredSelected, someFilteredSelected]);
+
+  useEffect(() => {
+    setPendingBatchDelete(false);
+  }, [selectedEchoIds]);
 
   useEffect(() => {
     const element = tableWrapRef.current;
@@ -480,14 +605,16 @@ export function EchoPoolPage() {
 
   const columnWidths = useMemo(() => {
     const total = Math.max(tableClientWidth, 1);
+    const select = 40;
     const actions = total >= 760 ? 270 : Math.max(210, Math.floor(total * 0.32));
-    const remaining = Math.max(total - actions, 0);
+    const remaining = Math.max(total - actions - select, 0);
     const nickname = Math.floor((remaining * 3) / 10);
     const main = Math.floor(remaining / 10);
     const cost = Math.floor(remaining / 10);
     const status = Math.floor(remaining / 10);
     const slots = remaining - nickname - main - cost - status;
     return {
+      select,
       nickname,
       main,
       cost,
@@ -541,6 +668,161 @@ export function EchoPoolPage() {
     () => expectationPresets.find((preset) => preset.presetId === selectedPresetId)?.name ?? "未选择",
     [expectationPresets, selectedPresetId],
   );
+
+  const applyEchoSelection = (echoId: string, options: { toggle: boolean; range: boolean }) => {
+    const targetIndex = filteredEchoIds.indexOf(echoId);
+    if (targetIndex < 0) {
+      return;
+    }
+
+    setSelectedEchoIds((prev) => {
+      if (options.range && selectionAnchorId) {
+        const anchorIndex = filteredEchoIds.indexOf(selectionAnchorId);
+        if (anchorIndex >= 0) {
+          const start = Math.min(anchorIndex, targetIndex);
+          const end = Math.max(anchorIndex, targetIndex);
+          const rangeIds = filteredEchoIds.slice(start, end + 1);
+          if (options.toggle) {
+            const merged = new Set(prev);
+            rangeIds.forEach((id) => merged.add(id));
+            return Array.from(merged);
+          }
+          return rangeIds;
+        }
+      }
+
+      if (options.toggle) {
+        if (prev.includes(echoId)) {
+          return prev.filter((id) => id !== echoId);
+        }
+        return [...prev, echoId];
+      }
+
+      return [echoId];
+    });
+
+    setSelectionAnchorId(echoId);
+  };
+
+  const onEchoRowClick = (event: ReactMouseEvent<HTMLTableRowElement>, echoId: string) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest("button, input, select, textarea, a, label")) {
+      return;
+    }
+    applyEchoSelection(echoId, {
+      toggle: event.metaKey || event.ctrlKey,
+      range: event.shiftKey,
+    });
+  };
+
+  const onEchoCheckboxClick = (event: ReactMouseEvent<HTMLInputElement>, echoId: string) => {
+    event.stopPropagation();
+    applyEchoSelection(echoId, {
+      toggle: event.metaKey || event.ctrlKey || !event.shiftKey,
+      range: event.shiftKey,
+    });
+  };
+
+  const onToggleSelectAllVisible = (checked: boolean) => {
+    if (!checked) {
+      setSelectedEchoIds([]);
+      setSelectionAnchorId(null);
+      return;
+    }
+    setSelectedEchoIds(filteredEchoIds);
+    setSelectionAnchorId(filteredEchoIds[0] ?? null);
+  };
+
+  const applyPresetToSelectedEchoes = async () => {
+    if (selectedEchoIds.length === 0) {
+      setMessage("请先选择要批量操作的声骸。");
+      return;
+    }
+    if (!selectedBatchPreset) {
+      setMessage("请先选择要应用的预设。");
+      return;
+    }
+
+    const targetEchoIds = [...selectedEchoIds];
+    setSaving(true);
+    setMessage("");
+    try {
+      const results = await Promise.allSettled(
+        targetEchoIds.map((echoId) => setExpectations(echoId, selectedBatchPreset.items)),
+      );
+      await refreshEchoes();
+
+      if (editingEchoId && targetEchoIds.includes(editingEchoId)) {
+        cancelEdit();
+      }
+
+      const failed = results.filter((result) => result.status === "rejected");
+      const successCount = targetEchoIds.length - failed.length;
+      if (failed.length === 0) {
+        setMessage(
+          `已对 ${successCount} 条声骸应用预设「${selectedBatchPreset.name}」。`,
+          "success",
+        );
+      } else {
+        const firstError = failed[0];
+        const detail = firstError?.status === "rejected" ? ` 首个错误：${String(firstError.reason)}` : "";
+        setMessage(
+          `已应用 ${successCount}/${targetEchoIds.length} 条，${failed.length} 条失败。${detail}`,
+          "error",
+        );
+      }
+    } catch (error) {
+      setMessage(String(error), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeSelectedEchoes = async () => {
+    if (selectedEchoIds.length === 0) {
+      setMessage("请先选择要删除的声骸。");
+      return;
+    }
+    if (!pendingBatchDelete) {
+      setPendingBatchDelete(true);
+      setMessage(`再次点击“批量删除”以确认删除 ${selectedEchoIds.length} 条声骸。`);
+      return;
+    }
+
+    const targetEchoIds = [...selectedEchoIds];
+    setSaving(true);
+    setMessage("");
+    try {
+      const results = await Promise.allSettled(targetEchoIds.map((echoId) => deleteEcho(echoId)));
+      await refreshEchoes();
+
+      const targetSet = new Set(targetEchoIds);
+      setSelectedEchoIds((prev) => prev.filter((echoId) => !targetSet.has(echoId)));
+      setSelectionAnchorId((prev) => (prev && targetSet.has(prev) ? null : prev));
+
+      if (editingEchoId && targetSet.has(editingEchoId)) {
+        cancelEdit();
+      }
+
+      const failed = results.filter((result) => result.status === "rejected");
+      const successCount = targetEchoIds.length - failed.length;
+      if (failed.length === 0) {
+        setMessage(`已删除 ${successCount} 条声骸。`, "success");
+      } else {
+        const firstError = failed[0];
+        const detail = firstError?.status === "rejected" ? ` 首个错误：${String(firstError.reason)}` : "";
+        setMessage(
+          `已删除 ${successCount}/${targetEchoIds.length} 条，${failed.length} 条删除失败。${detail}`,
+          "error",
+        );
+      }
+    } catch (error) {
+      setMessage(String(error), "error");
+    } finally {
+      setPendingBatchDelete(false);
+      setSaving(false);
+    }
+  };
 
   const startEdit = (echoId: string) => {
     const echo = echoes.find((x) => x.echoId === echoId);
@@ -803,7 +1085,7 @@ export function EchoPoolPage() {
   };
 
   const openCreatePresetNaming = (source: PresetCreateSource = "selector") => {
-    if (!editingEcho) {
+    if (source === "selector" && !editingEcho) {
       setMessage("请先点击某条声骸的“管理”，再设为预设。");
       return;
     }
@@ -815,31 +1097,33 @@ export function EchoPoolPage() {
   };
 
   const createPresetFromCurrent = async () => {
-    if (!editingEcho) {
+    if (presetCreateSource === "selector" && !editingEcho) {
       setMessage("请先点击某条声骸的“管理”，再设为预设。");
       return;
     }
-    const uniqueExpectationStats = Array.from(new Set(expectationStats));
-    if (uniqueExpectationStats.length !== expectationStats.length) {
-      setMessage("期望词条存在重复，请先调整。");
-      return;
-    }
-    const items = chainToExpectationItems(expectationStats, expectationOps);
-    if (items.length === 0) {
-      setMessage("当前没有可保存的期望词条。");
-      return;
-    }
+    const isFromSelector = presetCreateSource === "selector";
+    let items: ExpectationItem[] = [];
 
-    const existingPreset = findPresetByChain(expectationPresets, expectationStats, expectationOps);
-    if (existingPreset) {
-      setSelectedPresetId(existingPreset.presetId);
-      setPresetNamingOpen(false);
-      setPresetSelectorOpen(false);
-      if (presetCreateSource === "manager") {
-        openPresetEditor(existingPreset);
+    if (isFromSelector) {
+      const uniqueExpectationStats = Array.from(new Set(expectationStats));
+      if (uniqueExpectationStats.length !== expectationStats.length) {
+        setMessage("期望词条存在重复，请先调整。");
+        return;
       }
-      setMessage(`已存在相同内容的预设「${existingPreset.name}」，已自动选中。`);
-      return;
+      items = chainToExpectationItems(expectationStats, expectationOps);
+      if (items.length === 0) {
+        setMessage("当前没有可保存的期望词条。");
+        return;
+      }
+
+      const existingPreset = findPresetByChain(expectationPresets, expectationStats, expectationOps);
+      if (existingPreset) {
+        setSelectedPresetId(existingPreset.presetId);
+        setPresetNamingOpen(false);
+        setPresetSelectorOpen(false);
+        setMessage(`已存在相同内容的预设「${existingPreset.name}」，已自动选中。`);
+        return;
+      }
     }
 
     const generatedName = presetNamingValue.trim() || buildDefaultPresetName();
@@ -855,14 +1139,14 @@ export function EchoPoolPage() {
       setSelectedPresetId(result.presetId);
       setPresetNamingOpen(false);
       setPresetSelectorOpen(false);
-      if (presetCreateSource === "manager") {
+      if (!isFromSelector) {
         openPresetEditor({
           presetId: result.presetId,
           name: generatedName,
           items,
         });
       }
-      setMessage(`已设为预设「${generatedName}」。`, "success");
+      setMessage(isFromSelector ? `已设为预设「${generatedName}」。` : `已新建空预设「${generatedName}」。`, "success");
     } catch (error) {
       setMessage(String(error), "error");
     } finally {
@@ -935,6 +1219,17 @@ export function EchoPoolPage() {
     const uniquePresetStats = Array.from(new Set(presetDraftStats));
     if (uniquePresetStats.length !== presetDraftStats.length) {
       setMessage("预设词条存在重复，请先调整。");
+      return;
+    }
+    const duplicatePreset = findPresetByChain(
+      expectationPresets,
+      presetDraftStats,
+      presetDraftOps,
+      presetDraftId ?? undefined,
+    );
+    if (duplicatePreset) {
+      setSelectedPresetId(duplicatePreset.presetId);
+      setMessage(`已存在相同内容的预设「${duplicatePreset.name}」，请调整后再保存。`);
       return;
     }
 
@@ -1335,8 +1630,97 @@ export function EchoPoolPage() {
       ) : null}
 
       <div className="card echo-table-card" ref={tableWrapRef}>
+        <div className="echo-toolbar">
+          <div className="echo-toolbar-group echo-filter-group">
+            <span className="echo-toolbar-title">筛选</span>
+            <label>
+              Cost
+              <select
+                value={echoFilters.costClass}
+                onChange={(e) =>
+                  setEchoFilters((prev) => ({ ...prev, costClass: e.target.value as EchoFilters["costClass"] }))
+                }
+              >
+                <option value="all">全部</option>
+                <option value="1">1</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+              </select>
+            </label>
+            <label>
+              主词条
+              <select
+                value={echoFilters.mainStatKey}
+                onChange={(e) => setEchoFilters((prev) => ({ ...prev, mainStatKey: e.target.value }))}
+              >
+                <option value="all">全部</option>
+                {statDefs.map((stat) => (
+                  <option key={stat.statKey} value={stat.statKey}>
+                    {stat.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              状态
+              <select
+                value={echoFilters.status}
+                onChange={(e) =>
+                  setEchoFilters((prev) => ({
+                    ...prev,
+                    status:
+                      e.target.value === "all" || ECHO_STATUS_OPTIONS.includes(e.target.value as EchoStatus)
+                        ? (e.target.value as EchoFilters["status"])
+                        : "all",
+                  }))
+                }
+              >
+                <option value="all">全部</option>
+                {ECHO_STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => setEchoFilters({ ...DEFAULT_ECHO_FILTERS })}
+              disabled={
+                echoFilters.costClass === DEFAULT_ECHO_FILTERS.costClass &&
+                echoFilters.mainStatKey === DEFAULT_ECHO_FILTERS.mainStatKey &&
+                echoFilters.status === DEFAULT_ECHO_FILTERS.status
+              }
+            >
+              重置筛选
+            </button>
+          </div>
+
+          <div className="echo-toolbar-group echo-batch-group">
+            <span className="echo-toolbar-title">批量</span>
+            <span className="echo-toolbar-meta">
+              已选 {selectedEchoIds.length} / 可见 {filteredEchoes.length}
+            </span>
+            <select value={batchPresetId} onChange={(e) => setBatchPresetId(e.target.value)}>
+              <option value="">选择预设</option>
+              {expectationPresets.map((preset) => (
+                <option key={preset.presetId} value={preset.presetId}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+            <button type="button" onClick={() => void applyPresetToSelectedEchoes()} disabled={saving}>
+              批量应用预设
+            </button>
+            <button type="button" onClick={() => void removeSelectedEchoes()} disabled={saving}>
+              {pendingBatchDelete ? "确认批量删除" : "批量删除"}
+            </button>
+            <span className="hint">行点击支持 Ctrl/Cmd 多选，Shift 区间选择</span>
+          </div>
+        </div>
         <table className="table echo-table">
           <colgroup>
+            <col className="echo-col-select" style={{ width: `${columnWidths.select}px` }} />
             <col className="echo-col-nickname" style={{ width: `${columnWidths.nickname}px` }} />
             <col className="echo-col-main" style={{ width: `${columnWidths.main}px` }} />
             <col className="echo-col-cost" style={{ width: `${columnWidths.cost}px` }} />
@@ -1346,6 +1730,16 @@ export function EchoPoolPage() {
           </colgroup>
           <thead>
             <tr>
+              <th className="echo-col-select">
+                <input
+                  ref={selectAllCheckboxRef}
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  onChange={(e) => onToggleSelectAllVisible(e.target.checked)}
+                  disabled={filteredEchoes.length === 0}
+                  title="全选当前筛选结果"
+                />
+              </th>
               <th className="echo-col-nickname">昵称</th>
               <th className="echo-col-main">主词条</th>
               <th className="echo-col-cost">Cost</th>
@@ -1355,12 +1749,31 @@ export function EchoPoolPage() {
             </tr>
           </thead>
           <tbody>
-            {echoes.map((echo) => {
+            {filteredEchoes.map((echo) => {
               const editing = editingEchoId === echo.echoId;
+              const selected = selectedEchoIdSet.has(echo.echoId);
+              const rowClassName = [editing ? "active-row" : "", selected ? "selected-row" : ""]
+                .filter((x) => x)
+                .join(" ");
 
               return (
                 <Fragment key={echo.echoId}>
-                  <tr key={`${echo.echoId}-row`} className={editing ? "active-row" : ""}>
+                  <tr
+                    key={`${echo.echoId}-row`}
+                    className={rowClassName || undefined}
+                    onClick={(event) => onEchoRowClick(event, echo.echoId)}
+                  >
+                    <td className="echo-col-select">
+                      <div className="echo-cell echo-select-cell">
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onClick={(event) => onEchoCheckboxClick(event, echo.echoId)}
+                          readOnly
+                          title="选择该声骸"
+                        />
+                      </div>
+                    </td>
                     <td className="echo-col-nickname">
                       <div className="echo-cell">
                         {editing && basicDraft ? (
@@ -1497,7 +1910,7 @@ export function EchoPoolPage() {
                         ) : null}
                         <button
                           type="button"
-                          className="echo-action-btn echo-delete-btn"
+                          className="echo-action-btn"
                           onClick={() => void removeEcho(echo.echoId)}
                           disabled={saving}
                         >
@@ -1508,7 +1921,7 @@ export function EchoPoolPage() {
                   </tr>
                   {editing && editingEcho && basicDraft ? (
                     <tr key={`${echo.echoId}-editor`} className="active-row">
-                      <td colSpan={6}>
+                      <td colSpan={7}>
                         <div className="inline-edit-panel">
                           <div className="chain-block">
                             <span className="chain-label">期望词条</span>
@@ -1781,6 +2194,13 @@ export function EchoPoolPage() {
                 </Fragment>
               );
             })}
+            {filteredEchoes.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="chain-empty">
+                  当前筛选条件下无声骸。
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
