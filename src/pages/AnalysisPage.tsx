@@ -4,6 +4,7 @@ import {
   editOrderedEvent,
   exportCsv,
   getEventHistory,
+  importData,
 } from "../api/tauri";
 import { useAppStore } from "../store/useAppStore";
 import type { EventRow } from "../types/domain";
@@ -17,7 +18,7 @@ function toLocalInputValue(iso: string): string {
 }
 
 export function AnalysisPage() {
-  const { distributionFilter, selectedStatKey } = useAppStore();
+  const { distributionFilter, selectedStatKey, loadBootData } = useAppStore();
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventId, setEventId] = useState("");
   const [slotNo, setSlotNo] = useState("");
@@ -27,6 +28,7 @@ export function AnalysisPage() {
   const [reorderMode, setReorderMode] = useState<"none" | "time_assist">("none");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [importZipPath, setImportZipPath] = useState("");
 
   const loadEvents = async () => {
     const rows = await getEventHistory({ limit: 200 });
@@ -103,17 +105,44 @@ export function AnalysisPage() {
     }
   };
 
+  const doImport = async () => {
+    if (!importZipPath.trim()) {
+      setMessage("请先输入 zip 文件路径。");
+      return;
+    }
+    if (!window.confirm("导入会覆盖当前记录数据，确认继续？")) {
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    try {
+      const result = await importData(importZipPath.trim());
+      await loadBootData();
+      await loadEvents();
+      setMessage(`导入完成，表：${result.importedTables.join(", ") || "无"}`);
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <section className="page">
-      <h2>分析与修正</h2>
-      <p className="hint">事件修正需二次确认，你可以选择是否执行 time_assist 重排。</p>
-
       <div className="card inline-row">
         <button type="button" onClick={() => void snapshot()} disabled={loading}>
           生成概率快照
         </button>
         <button type="button" onClick={() => void doExport()} disabled={loading}>
           导出 CSV(zip)
+        </button>
+        <input
+          value={importZipPath}
+          onChange={(e) => setImportZipPath(e.target.value)}
+          placeholder="导入 zip 绝对路径"
+        />
+        <button type="button" onClick={() => void doImport()} disabled={loading}>
+          导入数据
         </button>
       </div>
 

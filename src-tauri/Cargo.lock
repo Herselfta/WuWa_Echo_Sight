@@ -3791,26 +3791,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "csv",
- "hex",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "rusqlite",
- "serde",
- "serde_json",
- "statrs",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "uuid",
- "zip",
-]
-
-[[package]]
 name = "tauri-build"
 version = "2.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5359,6 +5339,26 @@ dependencies = [
  "windows-core 0.61.2",
  "windows-version",
  "x11-dl",
+]
+
+[[package]]
+name = "wuwa-echo-sight"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "csv",
+ "hex",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "statrs",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "uuid",
+ "zip",
 ]
 
 [[package]]

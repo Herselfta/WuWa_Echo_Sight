@@ -7,11 +7,11 @@ use tauri::Manager;
 
 use commands::analysis::{create_probability_snapshot, get_echoes_for_stat, get_global_distribution};
 use commands::echo::{
-    create_echo, delete_expectation_preset, list_echoes, list_expectation_presets, list_stat_defs,
-    save_expectation_preset, set_expectations, update_echo, upsert_backfill_state,
+    create_echo, delete_echo, delete_expectation_preset, list_echoes, list_expectation_presets,
+    list_stat_defs, save_expectation_preset, set_expectations, update_echo, upsert_backfill_state,
 };
 use commands::event::{append_ordered_event, edit_ordered_event, get_event_history};
-use commands::export::export_csv;
+use commands::export::{export_csv, import_data};
 use db::{init_database, AppState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -36,6 +36,7 @@ pub fn run() {
             list_stat_defs,
             create_echo,
             update_echo,
+            delete_echo,
             list_echoes,
             set_expectations,
             list_expectation_presets,
@@ -49,6 +50,7 @@ pub fn run() {
             get_echoes_for_stat,
             create_probability_snapshot,
             export_csv,
+            import_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

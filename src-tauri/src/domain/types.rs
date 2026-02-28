@@ -88,6 +88,12 @@ pub struct UpdateEchoInput {
     pub status: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteEchoInput {
+    pub echo_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct EchoFilter {
@@ -279,4 +285,17 @@ pub struct ExportCsvInput {
 #[serde(rename_all = "camelCase")]
 pub struct ExportCsvOutput {
     pub zip_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportDataInput {
+    pub zip_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportDataOutput {
+    pub ok: bool,
+    pub imported_tables: Vec<String>,
 }

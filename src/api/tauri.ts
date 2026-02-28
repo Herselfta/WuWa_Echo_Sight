@@ -33,6 +33,10 @@ export async function updateEcho(input: {
   return invoke("update_echo", { input });
 }
 
+export async function deleteEcho(echoId: string): Promise<{ ok: boolean }> {
+  return invoke("delete_echo", { input: { echoId } });
+}
+
 export async function listEchoes(filter?: {
   status?: string;
   mainStatKey?: string;
@@ -124,4 +128,8 @@ export async function exportCsv(input: {
   includeSnapshots: boolean;
 }): Promise<{ zipPath: string }> {
   return invoke("export_csv", { input });
+}
+
+export async function importData(zipPath: string): Promise<{ ok: boolean; importedTables: string[] }> {
+  return invoke("import_data", { input: { zipPath } });
 }

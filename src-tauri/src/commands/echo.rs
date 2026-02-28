@@ -6,10 +6,10 @@ use uuid::Uuid;
 
 use crate::db::{get_tier_value, now_rfc3339, open_connection, AppState};
 use crate::domain::types::{
-    BackfillSlotInput, CreateEchoInput, CreateEchoOutput, EchoFilter, EchoSubstatSlot, EchoSummary,
-    DeleteExpectationPresetInput, ExpectationItem, ExpectationPreset, SaveExpectationPresetInput,
-    SaveExpectationPresetOutput, SetExpectationsInput, SimpleOk, StatDef, StatTier, UpdateEchoInput,
-    UpsertBackfillInput,
+    BackfillSlotInput, CreateEchoInput, CreateEchoOutput, DeleteEchoInput, EchoFilter, EchoSubstatSlot,
+    EchoSummary, DeleteExpectationPresetInput, ExpectationItem, ExpectationPreset,
+    SaveExpectationPresetInput, SaveExpectationPresetOutput, SetExpectationsInput, SimpleOk, StatDef,
+    StatTier, UpdateEchoInput, UpsertBackfillInput,
 };
 
 fn ensure_status(status: &str) -> Result<(), String> {
@@ -167,6 +167,49 @@ pub fn update_echo(state: State<'_, AppState>, input: UpdateEchoInput) -> Result
     )
     .map_err(|e| format!("failed to update echo: {e}"))?;
 
+    Ok(SimpleOk { ok: true })
+}
+
+#[tauri::command]
+pub fn delete_echo(state: State<'_, AppState>, input: DeleteEchoInput) -> Result<SimpleOk, String> {
+    let mut conn = open_connection(&state)?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("failed to start delete transaction: {e}"))?;
+
+    let exists: Option<String> = tx
+        .query_row(
+            "SELECT echo_id FROM echoes WHERE echo_id = ?1",
+            [&input.echo_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("failed to verify echo existence: {e}"))?;
+    if exists.is_none() {
+        return Err(format!("echo not found: {}", input.echo_id));
+    }
+
+    tx.execute(
+        "DELETE FROM event_edit_logs
+         WHERE event_id IN (SELECT event_id FROM ordered_events WHERE echo_id = ?1)",
+        [&input.echo_id],
+    )
+    .map_err(|e| format!("failed to delete event_edit_logs: {e}"))?;
+
+    tx.execute("DELETE FROM ordered_events WHERE echo_id = ?1", [&input.echo_id])
+        .map_err(|e| format!("failed to delete ordered_events: {e}"))?;
+    tx.execute(
+        "DELETE FROM echo_current_substats WHERE echo_id = ?1",
+        [&input.echo_id],
+    )
+    .map_err(|e| format!("failed to delete current_substats: {e}"))?;
+    tx.execute("DELETE FROM echo_expectations WHERE echo_id = ?1", [&input.echo_id])
+        .map_err(|e| format!("failed to delete expectations: {e}"))?;
+    tx.execute("DELETE FROM echoes WHERE echo_id = ?1", [&input.echo_id])
+        .map_err(|e| format!("failed to delete echo: {e}"))?;
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit delete echo transaction: {e}"))?;
     Ok(SimpleOk { ok: true })
 }
 
