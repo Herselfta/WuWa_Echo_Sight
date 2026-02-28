@@ -98,3 +98,71 @@ export interface EventRow {
   gameDay: string;
   createdAt: string;
 }
+
+/* ═══ Hypothesis verification types ═══ */
+
+export interface HypothesisFilter {
+  costClass?: number;
+  mainStatKey?: string;
+  status?: string;
+}
+
+export interface TransitionCell {
+  fromStat: string;
+  toStat: string;
+  count: number;
+  expected: number;
+  residual: number;
+}
+
+export interface TransitionMatrix {
+  statKeys: [string, string][];
+  cells: TransitionCell[];
+  totalTransitions: number;
+  chiSquared: number;
+  degreesOfFreedom: number;
+  pValue: number;
+}
+
+export interface SlotStatCell {
+  slotNo: number;
+  statKey: string;
+  displayName: string;
+  category: string;
+  count: number;
+  probability: number;
+}
+
+export interface SlotStatDistribution {
+  statKeys: [string, string][];
+  cells: SlotStatCell[];
+  slotTotals: number[];
+  totalEvents: number;
+  chiSquared: number;
+  degreesOfFreedom: number;
+  pValue: number;
+}
+
+export interface CategoryStreakRow {
+  echoId: string;
+  category: string;
+  startSlot: number;
+  endSlot: number;
+  length: number;
+  stats: string[];
+  tiers: number[];
+  possibleZones: string[];
+}
+
+export interface CategoryStreakReport {
+  streaks: CategoryStreakRow[];
+  zoneTransitions: [string, string, number][];
+  zoneVisits: [string, number][];
+  tierTotalPairs: number;
+  tierStopCount: number;
+  tierStepCount: number;
+  tierJumpCount: number;
+  tierStopRatio: number;
+  tierStepRatio: number;
+  tierJumpRatio: number;
+}

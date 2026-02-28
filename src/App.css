@@ -1668,6 +1668,31 @@ button:hover {
   min-width: 0;
 }
 
+.record-preset-naming-pop {
+  position: fixed;
+  z-index: var(--z-popup);
+  min-width: 260px;
+  max-width: min(420px, 86vw);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.record-preset-naming-pop input {
+  flex: 1;
+  min-width: 0;
+}
+
+.record-preset-naming-pop button[type="submit"] {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
 /* ── responsive ───── */
 
 @media (max-width: 900px) {

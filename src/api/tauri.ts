@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CategoryStreakReport,
   DistributionFilter,
   DistributionPayload,
   EchoProbRow,
@@ -7,7 +8,10 @@ import type {
   ExpectationPreset,
   EventRow,
   ExpectationItem,
+  HypothesisFilter,
+  SlotStatDistribution,
   StatDef,
+  TransitionMatrix,
 } from "../types/domain";
 
 export async function listStatDefs(): Promise<StatDef[]> {
@@ -132,4 +136,24 @@ export async function exportCsv(input: {
 
 export async function importData(zipPath: string): Promise<{ ok: boolean; importedTables: string[] }> {
   return invoke("import_data", { input: { zipPath } });
+}
+
+/* ═══ Hypothesis verification ═══ */
+
+export async function getTransitionMatrix(
+  filter?: HypothesisFilter,
+): Promise<TransitionMatrix> {
+  return invoke("get_transition_matrix", { filter });
+}
+
+export async function getSlotStatDistribution(
+  filter?: HypothesisFilter,
+): Promise<SlotStatDistribution> {
+  return invoke("get_slot_stat_distribution", { filter });
+}
+
+export async function getCategoryStreakAnalysis(
+  filter?: HypothesisFilter,
+): Promise<CategoryStreakReport> {
+  return invoke("get_category_streak_analysis", { filter });
 }

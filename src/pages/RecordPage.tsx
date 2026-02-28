@@ -24,10 +24,21 @@ import type {
 /* ── helpers ─────────────────────────────────────────── */
 
 type RelOp = "gt" | "eq";
+type DragKind = "expectation" | "slot";
 
 interface SlotDraft {
   statKey: string;
   tierIndex: number;
+}
+
+interface DragState {
+  kind: DragKind;
+  fromIndex: number;
+  dropIndex: number;
+  pointerId: number;
+  x: number;
+  y: number;
+  label: string;
 }
 
 function toLocalInputValue(date: Date): string {
@@ -123,6 +134,61 @@ function statKeyToAbbr(statKey: string): string {
   return STAT_ABBR_MAP[statKey] ?? statKey;
 }
 
+function moveArrayToInsertion<T>(arr: T[], from: number, insertionIndex: number): T[] {
+  if (from < 0 || from >= arr.length) return arr;
+  const next = [...arr];
+  const [item] = next.splice(from, 1);
+  const clamped = Math.max(0, Math.min(insertionIndex, next.length));
+  next.splice(clamped, 0, item);
+  return next;
+}
+
+function remapIndexAfterInsertion(
+  index: number | null,
+  length: number,
+  from: number,
+  insertionIndex: number,
+): number | null {
+  if (index === null) return null;
+  const remapped = moveArrayToInsertion(
+    Array.from({ length }, (_, i) => i),
+    from,
+    insertionIndex,
+  );
+  return remapped.indexOf(index);
+}
+
+function computeInsertionIndex(
+  kind: DragKind,
+  fromIndex: number,
+  clientX: number,
+): number {
+  const hosts = Array.from(document.querySelectorAll<HTMLElement>(`[data-drag-kind="${kind}"][data-drag-index]`))
+    .map((host) => ({
+      host,
+      index: Number(host.dataset.dragIndex),
+    }))
+    .filter((item) => Number.isInteger(item.index) && item.index !== fromIndex)
+    .sort((a, b) => a.index - b.index);
+  if (hosts.length === 0) return 0;
+  const beforeIndex = hosts.findIndex(({ host }) => {
+    const rect = host.getBoundingClientRect();
+    return clientX < rect.left + rect.width / 2;
+  });
+  return beforeIndex === -1 ? hosts.length : beforeIndex;
+}
+
+function resolveInsertBeforeIndex(
+  length: number,
+  fromIndex: number,
+  insertionIndex: number,
+): number | null {
+  const visible = Array.from({ length }, (_, i) => i).filter((idx) => idx !== fromIndex);
+  if (insertionIndex < 0) return visible[0] ?? null;
+  if (insertionIndex >= visible.length) return null;
+  return visible[insertionIndex];
+}
+
 /* ── component ───────────────────────────────────── */
 
 export function RecordPage() {
@@ -162,8 +228,16 @@ export function RecordPage() {
   const createPresetBtnRef = useRef<HTMLButtonElement | null>(null);
   const createPresetMenuRef = useRef<HTMLDivElement | null>(null);
   const createPresetNamingInputRef = useRef<HTMLInputElement | null>(null);
+  const createPresetNamingFormRef = useRef<HTMLFormElement | null>(null);
+  const [createPresetNamingPos, setCreatePresetNamingPos] = useState({ left: 0, top: 0, width: 260 });
 
   const [createActiveSlotIdx, setCreateActiveSlotIdx] = useState<number | null>(null);
+
+  /* === drag-to-reorder === */
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const dragStateRef = useRef<DragState | null>(null);
+  const createExpRowRef = useRef<HTMLDivElement | null>(null);
+  const createSlotRowRef = useRef<HTMLDivElement | null>(null);
 
   /* === record event === */
   const [statKey, setStatKey] = useState<string>("crit_rate");
@@ -232,6 +306,18 @@ export function RecordPage() {
     [expectationPresets, createPresetId],
   );
 
+  /* ── drag derivations ──────────── */
+  const draggingExpFromIndex = dragState?.kind === "expectation" ? dragState.fromIndex : null;
+  const draggingSlotFromIndex = dragState?.kind === "slot" ? dragState.fromIndex : null;
+  const expInsertBeforeIndex =
+    dragState?.kind === "expectation"
+      ? resolveInsertBeforeIndex(createExpStats.length, dragState.fromIndex, dragState.dropIndex)
+      : null;
+  const slotInsertBeforeIndex =
+    dragState?.kind === "slot"
+      ? resolveInsertBeforeIndex(createSlots.length, dragState.fromIndex, dragState.dropIndex)
+      : null;
+
   /* ── effects ───────────────────── */
 
   useEffect(() => {
@@ -256,16 +342,118 @@ export function RecordPage() {
 
   // close preset menu on outside click
   useEffect(() => {
-    if (!createPresetSelectorOpen) return;
+    if (!createPresetSelectorOpen && !createPresetNamingOpen) return;
     const handler = (e: PointerEvent) => {
       if (!(e.target instanceof Node)) return;
       if (createPresetBtnRef.current?.contains(e.target)) return;
       if (createPresetMenuRef.current?.contains(e.target)) return;
+      if (createPresetNamingFormRef.current?.contains(e.target)) return;
       setCreatePresetSelectorOpen(false);
+      setCreatePresetNamingOpen(false);
     };
     window.addEventListener("pointerdown", handler);
     return () => window.removeEventListener("pointerdown", handler);
-  }, [createPresetSelectorOpen]);
+  }, [createPresetSelectorOpen, createPresetNamingOpen]);
+
+  // auto-focus naming input & track position
+  useEffect(() => {
+    if (!createPresetNamingOpen) return;
+    const frame = requestAnimationFrame(() => {
+      syncCreatePresetNamingPos();
+      const input = createPresetNamingInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+    const onResize = () => syncCreatePresetNamingPos();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onResize, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onResize, true);
+    };
+  }, [createPresetNamingOpen]);
+
+  // drag state sync
+  useEffect(() => { dragStateRef.current = dragState; }, [dragState]);
+
+  useEffect(() => {
+    document.body.classList.toggle("is-dragging-chain", dragState !== null);
+    return () => document.body.classList.remove("is-dragging-chain");
+  }, [dragState]);
+
+  // drag move / up / blur
+  useEffect(() => {
+    if (!dragState) return;
+
+    const finishDragging = (apply: boolean) => {
+      const current = dragStateRef.current;
+      if (!current) { setDragState(null); return; }
+      if (apply) {
+        if (current.kind === "expectation") {
+          setCreateExpStats((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
+          setCreateActiveExpIdx((prev) =>
+            remapIndexAfterInsertion(prev, createExpStats.length, current.fromIndex, current.dropIndex),
+          );
+        } else {
+          setCreateSlots((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
+          setCreateActiveSlotIdx((prev) =>
+            remapIndexAfterInsertion(prev, createSlots.length, current.fromIndex, current.dropIndex),
+          );
+        }
+      }
+      setDragState(null);
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const current = dragStateRef.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      if (event.buttons === 0) { finishDragging(true); return; }
+
+      const row = current.kind === "expectation" ? createExpRowRef.current : createSlotRowRef.current;
+      let nextDropIndex = current.dropIndex;
+      if (row) {
+        const rect = row.getBoundingClientRect();
+        const nearRow =
+          event.clientY >= rect.top - 28 &&
+          event.clientY <= rect.bottom + 28 &&
+          event.clientX >= rect.left - 80 &&
+          event.clientX <= rect.right + 80;
+        if (nearRow) {
+          const edgeThreshold = 26;
+          if (event.clientX < rect.left + edgeThreshold) {
+            row.scrollLeft = Math.max(0, row.scrollLeft - 18);
+          } else if (event.clientX > rect.right - edgeThreshold) {
+            row.scrollLeft += 18;
+          }
+          nextDropIndex = computeInsertionIndex(current.kind, current.fromIndex, event.clientX);
+        }
+      }
+      setDragState((prev) =>
+        prev && prev.pointerId === event.pointerId
+          ? { ...prev, x: event.clientX, y: event.clientY, dropIndex: nextDropIndex }
+          : prev,
+      );
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const current = dragStateRef.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      finishDragging(true);
+    };
+
+    const handleBlur = () => finishDragging(false);
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [dragState?.pointerId, createExpStats.length, createSlots.length]);
 
   const loadHistory = async () => {
     const rows = await getEventHistory({ limit: 100 });
@@ -373,13 +561,25 @@ export function RecordPage() {
     showMsg(`已载入预设「${preset.name}」。`);
   };
 
+  const syncCreatePresetNamingPos = () => {
+    const btn = createPresetBtnRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    setCreatePresetNamingPos({
+      left: rect.left,
+      top: rect.bottom + 4,
+      width: Math.max(260, rect.width),
+    });
+  };
+
   const openSaveCreatePreset = () => {
     if (createExpStats.length === 0) { showMsg("请先添加期望词条。"); return; }
     const d = new Date();
     const defaultName = `新预设 ${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
     setCreatePresetNamingValue(defaultName);
+    setCreatePresetSelectorOpen(false);
     setCreatePresetNamingOpen(true);
-    requestAnimationFrame(() => createPresetNamingInputRef.current?.select());
+    requestAnimationFrame(() => syncCreatePresetNamingPos());
   };
 
   const handleSaveCreatePreset = async (e: React.FormEvent) => {
@@ -498,21 +698,51 @@ export function RecordPage() {
     addFn: () => void,
     removeFn: (idx: number) => void,
   ) => (
-    <div className="chain-row">
+    <div className="chain-row" ref={createExpRowRef}>
       {stats.length === 0 ? <span className="chain-empty">点击 + 添加</span> : null}
       {stats.map((sk, idx) => {
+        if (draggingExpFromIndex === idx) return null;
         const stat = statMap.get(sk);
         const selected = activeIdx === idx;
         const availStats = statDefs.filter((x) => x.statKey === sk || !stats.includes(x.statKey));
+        const hideOperator =
+          draggingExpFromIndex !== null &&
+          (idx === draggingExpFromIndex || idx + 1 === draggingExpFromIndex);
         return (
           <Fragment key={`exp-${idx}-${sk}`}>
+            {expInsertBeforeIndex === idx ? (
+              <span className="drag-insert-line" aria-hidden="true" />
+            ) : null}
             <div className="chain-fragment">
               <div
                 className={selected ? "chain-item active" : "chain-item"}
+                data-drag-kind="expectation"
+                data-drag-index={idx}
                 onClick={() => setActiveIdx(idx)}
                 onContextMenu={(e) => { e.preventDefault(); removeFn(idx); }}
                 title="单击编辑，右键删除"
               >
+                <button
+                  type="button"
+                  className="drag-handle"
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setDragState({
+                      kind: "expectation",
+                      fromIndex: idx,
+                      dropIndex: idx,
+                      pointerId: e.pointerId,
+                      x: e.clientX,
+                      y: e.clientY,
+                      label: stat?.displayName ?? sk,
+                    });
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  title="按住拖动排序"
+                >
+                  ::
+                </button>
                 {selected ? (
                   <select
                     value={sk}
@@ -535,7 +765,7 @@ export function RecordPage() {
                   title="删除"
                 >×</button>
               </div>
-              {idx < ops.length ? (
+              {idx < ops.length && !hideOperator ? (
                 <button
                   type="button" className="chain-op"
                   onClick={() => setOps((prev) => prev.map((x, i) => (i === idx ? (x === "gt" ? "eq" : "gt") : x)))}
@@ -548,6 +778,9 @@ export function RecordPage() {
           </Fragment>
         );
       })}
+      {dragState?.kind === "expectation" && expInsertBeforeIndex === null ? (
+        <span className="drag-insert-line" aria-hidden="true" />
+      ) : null}
       <button type="button" className="chain-add" onClick={addFn}>+</button>
     </div>
   );
@@ -560,9 +793,10 @@ export function RecordPage() {
     addFn: () => void,
     removeFn: (idx: number) => void,
   ) => (
-    <div className="chain-row">
+    <div className="chain-row" ref={createSlotRowRef}>
       {slots.length === 0 ? <span className="chain-empty">点击 + 添加初始词条</span> : null}
       {slots.map((slot, idx) => {
+        if (draggingSlotFromIndex === idx) return null;
         const stat = statMap.get(slot.statKey);
         const selected = activeIdx === idx;
         const currentUsed = slots.map((x) => x.statKey);
@@ -573,14 +807,40 @@ export function RecordPage() {
 
         return (
           <Fragment key={`slot-${idx}-${slot.statKey}`}>
+            {slotInsertBeforeIndex === idx ? (
+              <span className="drag-insert-line" aria-hidden="true" />
+            ) : null}
             <div className="chain-fragment">
               <div
                 className={selected ? "chain-item active" : "chain-item"}
+                data-drag-kind="slot"
+                data-drag-index={idx}
                 onClick={() => setActiveIdx(idx)}
                 onContextMenu={(e) => { e.preventDefault(); removeFn(idx); }}
                 title="单击编辑，右键删除"
               >
                 <span className="slot-label">S{idx + 1}</span>
+                <button
+                  type="button"
+                  className="drag-handle"
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setDragState({
+                      kind: "slot",
+                      fromIndex: idx,
+                      dropIndex: idx,
+                      pointerId: e.pointerId,
+                      x: e.clientX,
+                      y: e.clientY,
+                      label: `S${idx + 1} ${statKeyToAbbr(slot.statKey)}${slot.tierIndex}`,
+                    });
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  title="按住拖动排序"
+                >
+                  ::
+                </button>
                 {selected ? (
                   <div className="inline-row slot-inline-edit">
                     <select
@@ -624,6 +884,9 @@ export function RecordPage() {
           </Fragment>
         );
       })}
+      {dragState?.kind === "slot" && slotInsertBeforeIndex === null ? (
+        <span className="drag-insert-line" aria-hidden="true" />
+      ) : null}
       <button type="button" className="chain-add" onClick={addFn} disabled={slots.length >= 5}>+</button>
     </div>
   );
@@ -635,6 +898,34 @@ export function RecordPage() {
       {/* Toast */}
       {message ? (
         <div className={`toast toast-${msgKind}`} onClick={() => showMsg("")}>{message}</div>
+      ) : null}
+      {/* Drag ghost */}
+      {dragState ? (
+        <div className="drag-ghost" style={{ left: dragState.x + 12, top: dragState.y + 12 }}>
+          <span className="drag-ghost-icon">::</span>
+          <span>{dragState.label}</span>
+        </div>
+      ) : null}
+      {/* Preset naming popover — outside all forms to avoid nested-form issues */}
+      {createPresetNamingOpen ? (
+        <form
+          ref={createPresetNamingFormRef}
+          className="record-preset-naming-pop"
+          style={{
+            left: `${createPresetNamingPos.left}px`,
+            top: `${createPresetNamingPos.top}px`,
+            width: `${createPresetNamingPos.width}px`,
+          }}
+          onSubmit={(e) => { void handleSaveCreatePreset(e); }}
+        >
+          <input
+            ref={createPresetNamingInputRef}
+            value={createPresetNamingValue}
+            onChange={(e) => setCreatePresetNamingValue(e.target.value)}
+            placeholder="输入预设名称"
+          />
+          <button type="submit" disabled={saving}>确定</button>
+        </form>
       ) : null}
 
       {/* ═══ 工作区 ═══ */}
@@ -735,31 +1026,17 @@ export function RecordPage() {
                         <span className="chain-empty" style={{ padding: "6px 8px" }}>暂无预设</span>
                       ) : null}
                       <span className="preset-option-divider" />
-                      {createPresetNamingOpen ? (
-                        <form
-                          className="record-preset-naming-row"
-                          onSubmit={(e) => { void handleSaveCreatePreset(e); }}
-                        >
-                          <input
-                            ref={createPresetNamingInputRef}
-                            value={createPresetNamingValue}
-                            onChange={(e) => setCreatePresetNamingValue(e.target.value)}
-                            placeholder="输入预设名称"
-                          />
-                          <button type="submit" disabled={saving}>确定</button>
-                        </form>
-                      ) : (
-                        <button
-                          type="button"
-                          className="preset-create-option"
-                          onClick={openSaveCreatePreset}
-                          disabled={saving}
-                        >
-                          设为预设
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        className="preset-create-option"
+                        onClick={openSaveCreatePreset}
+                        disabled={saving}
+                      >
+                        设为预设
+                      </button>
                     </div>
                   ) : null}
+
                 </div>
 
                 {/* 初始词条位 */}

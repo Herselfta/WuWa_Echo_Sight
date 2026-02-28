@@ -12,6 +12,9 @@ use commands::echo::{
 };
 use commands::event::{append_ordered_event, edit_ordered_event, get_event_history};
 use commands::export::{export_csv, import_data};
+use commands::hypothesis::{
+    get_category_streak_analysis, get_slot_stat_distribution, get_transition_matrix,
+};
 use db::{init_database, AppState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -51,6 +54,9 @@ pub fn run() {
             create_probability_snapshot,
             export_csv,
             import_data,
+            get_transition_matrix,
+            get_slot_stat_distribution,
+            get_category_streak_analysis,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

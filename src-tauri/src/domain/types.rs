@@ -299,3 +299,96 @@ pub struct ImportDataOutput {
     pub ok: bool,
     pub imported_tables: Vec<String>,
 }
+
+/* ═══════════════════════════════════════════════════════
+   Hypothesis verification types
+   ═══════════════════════════════════════════════════════ */
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HypothesisFilter {
+    pub cost_class: Option<i64>,
+    pub main_stat_key: Option<String>,
+    pub status: Option<String>,
+}
+
+/// Cell in the stat→stat transition matrix
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransitionCell {
+    pub from_stat: String,
+    pub to_stat: String,
+    pub count: i64,
+    pub expected: f64,
+    pub residual: f64,
+}
+
+/// Full transition matrix with χ² test results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransitionMatrix {
+    /// (stat_key, display_name)
+    pub stat_keys: Vec<(String, String)>,
+    pub cells: Vec<TransitionCell>,
+    pub total_transitions: i64,
+    pub chi_squared: f64,
+    pub degrees_of_freedom: i64,
+    pub p_value: f64,
+}
+
+/// Cell in the slotNo × stat distribution table
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotStatCell {
+    pub slot_no: i64,
+    pub stat_key: String,
+    pub display_name: String,
+    pub category: String,
+    pub count: i64,
+    pub probability: f64,
+}
+
+/// Slot-stat independence test
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotStatDistribution {
+    pub stat_keys: Vec<(String, String)>,
+    pub cells: Vec<SlotStatCell>,
+    pub slot_totals: Vec<i64>,
+    pub total_events: i64,
+    pub chi_squared: f64,
+    pub degrees_of_freedom: i64,
+    pub p_value: f64,
+}
+
+/// A detected streak of same-category stats
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryStreakRow {
+    pub echo_id: String,
+    pub category: String,
+    pub start_slot: i64,
+    pub end_slot: i64,
+    pub length: i64,
+    pub stats: Vec<String>,
+    pub tiers: Vec<i64>,
+    pub possible_zones: Vec<String>,
+}
+
+/// Full streak & zone analysis report
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryStreakReport {
+    pub streaks: Vec<CategoryStreakRow>,
+    /// (from_zone, to_zone, count)
+    pub zone_transitions: Vec<(String, String, i64)>,
+    /// (zone, visit_count)
+    pub zone_visits: Vec<(String, i64)>,
+    pub tier_total_pairs: i64,
+    pub tier_stop_count: i64,
+    pub tier_step_count: i64,
+    pub tier_jump_count: i64,
+    pub tier_stop_ratio: f64,
+    pub tier_step_ratio: f64,
+    pub tier_jump_ratio: f64,
+}
