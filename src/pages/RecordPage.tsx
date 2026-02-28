@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendOrderedEvent,
   createEcho,
-  deleteExpectationPreset,
   getEchoesForStat,
   getEventHistory,
   getGlobalDistribution,
   saveExpectationPreset,
   setExpectations,
+  upsertBackfillState,
 } from "../api/tauri";
 import { BarChart } from "../components/BarChart";
 import { useAppStore } from "../store/useAppStore";
@@ -21,9 +21,13 @@ import type {
   ExpectationPreset,
 } from "../types/domain";
 
-interface ExpectationDraft {
+/* ── helpers ─────────────────────────────────────────── */
+
+type RelOp = "gt" | "eq";
+
+interface SlotDraft {
   statKey: string;
-  rank: number;
+  tierIndex: number;
 }
 
 function toLocalInputValue(date: Date): string {
@@ -41,18 +45,114 @@ function formatScaledValue(unit: string, valueScaled: number) {
   return unit === "percent" ? `${(valueScaled / 10).toFixed(1)}%` : String(valueScaled);
 }
 
-function formatPresetSummary(items: ExpectationItem[]) {
-  const sorted = [...items].sort((a, b) => a.rank - b.rank || a.statKey.localeCompare(b.statKey));
-  return sorted.map((x) => `${x.statKey}(r${x.rank})`).join(" / ");
-}
-
 function toPercent(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+/* ── chain helpers (same logic as EchoPoolPage) ───── */
+
+function buildExpectationChain(items: ExpectationItem[]) {
+  const sorted = [...items].sort((a, b) => a.rank - b.rank || a.statKey.localeCompare(b.statKey));
+  const stats = sorted.map((x) => x.statKey);
+  const ops: RelOp[] = [];
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    ops.push(sorted[i + 1].rank === sorted[i].rank ? "eq" : "gt");
+  }
+  return { stats, ops };
+}
+
+function chainToExpectationItems(stats: string[], ops: RelOp[]): ExpectationItem[] {
+  if (stats.length === 0) return [];
+  const result: ExpectationItem[] = [];
+  let rank = 1;
+  result.push({ statKey: stats[0], rank });
+  for (let i = 1; i < stats.length; i += 1) {
+    if ((ops[i - 1] ?? "gt") === "gt") rank += 1;
+    result.push({ statKey: stats[i], rank });
+  }
+  return result;
+}
+
+function findPresetByChain(
+  presets: ExpectationPreset[],
+  stats: string[],
+  ops: RelOp[],
+): ExpectationPreset | null {
+  return (
+    presets.find((preset) => {
+      const chain = buildExpectationChain(preset.items);
+      if (chain.stats.length !== stats.length) return false;
+      for (let i = 0; i < stats.length; i++) if (chain.stats[i] !== stats[i]) return false;
+      for (let i = 0; i < ops.length; i++) if (chain.ops[i] !== ops[i]) return false;
+      return true;
+    }) ?? null
+  );
+}
+
+const STATUS_LABELS: Record<EchoStatus, string> = {
+  tracking: "追踪中",
+  paused: "已暂停",
+  abandoned: "已弃置",
+  completed: "已完成",
+};
+
+const STATUS_BADGE_CLASS: Record<EchoStatus, string> = {
+  tracking: "badge-tracking",
+  paused: "badge-paused",
+  abandoned: "badge-abandoned",
+  completed: "badge-completed",
+};
+
+const STAT_ABBR_MAP: Record<string, string> = {
+  crit_rate: "b",
+  crit_dmg: "B",
+  energy_regen: "e",
+  atk_flat: "a",
+  hp_flat: "h",
+  def_flat: "d",
+  basic_dmg: "n",
+  heavy_dmg: "c",
+  skill_dmg: "s",
+  liberation_dmg: "u",
+  atk_pct: "A",
+  hp_pct: "H",
+  def_pct: "D",
+};
+
+function statKeyToAbbr(statKey: string): string {
+  return STAT_ABBR_MAP[statKey] ?? statKey;
+}
+
+/* ── component ───────────────────────────────────── */
+
 export function RecordPage() {
   const { echoes, statDefs, expectationPresets, refreshEchoes, refreshExpectationPresets } = useAppStore();
+  const statMap = useMemo(() => new Map(statDefs.map((x) => [x.statKey, x])), [statDefs]);
 
+  /* === create echo form === */
+  const [createExpanded, setCreateExpanded] = useState(false);
+  const [createNickname, setCreateNickname] = useState("");
+  const [createMainStat, setCreateMainStat] = useState("atk_pct");
+  const [createCost, setCreateCost] = useState<number>(1);
+  const [createStatus, setCreateStatus] = useState<EchoStatus>("tracking");
+
+  // expectation chain for create form
+  const [createExpStats, setCreateExpStats] = useState<string[]>([]);
+  const [createExpOps, setCreateExpOps] = useState<RelOp[]>([]);
+  const [createActiveExpIdx, setCreateActiveExpIdx] = useState<number | null>(null);
+  const [createPresetId, setCreatePresetId] = useState<string | null>(null);
+  const [createPresetSelectorOpen, setCreatePresetSelectorOpen] = useState(false);
+  const [createPresetNamingOpen, setCreatePresetNamingOpen] = useState(false);
+  const [createPresetNamingValue, setCreatePresetNamingValue] = useState("");
+  const createPresetBtnRef = useRef<HTMLButtonElement | null>(null);
+  const createPresetMenuRef = useRef<HTMLDivElement | null>(null);
+  const createPresetNamingInputRef = useRef<HTMLInputElement | null>(null);
+
+  // initial slots for create form
+  const [createSlots, setCreateSlots] = useState<SlotDraft[]>([]);
+  const [createActiveSlotIdx, setCreateActiveSlotIdx] = useState<number | null>(null);
+
+  /* === record event === */
   const [selectedEchoId, setSelectedEchoId] = useState<string>("");
   const [slotNo, setSlotNo] = useState<number>(1);
   const [statKey, setStatKey] = useState<string>("crit_rate");
@@ -60,56 +160,51 @@ export function RecordPage() {
   const [eventTimeLocal, setEventTimeLocal] = useState<string>(toLocalInputValue(new Date()));
   const [eventHistory, setEventHistory] = useState<EventRow[]>([]);
 
-  const [createForm, setCreateForm] = useState({
-    nickname: "",
-    mainStatKey: "atk_pct",
-    costClass: 1,
-    status: "tracking" as EchoStatus,
-    presetId: "",
-  });
-
-  const [presetName, setPresetName] = useState("");
-  const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
-  const [presetDrafts, setPresetDrafts] = useState<ExpectationDraft[]>([
-    { statKey: "crit_rate", rank: 1 },
-  ]);
-
+  /* === distribution / analysis === */
   const [distributionFilter, setDistributionFilter] = useState<DistributionFilter>({});
   const [distribution, setDistribution] = useState<DistributionPayload | null>(null);
   const [selectedDistStatKey, setSelectedDistStatKey] = useState<string | null>(null);
   const [echoProbRows, setEchoProbRows] = useState<EchoProbRow[]>([]);
   const [sortBy, setSortBy] = useState("pFinal");
 
+  /* === misc === */
   const [saving, setSaving] = useState(false);
-  const [loadingDistribution, setLoadingDistribution] = useState(false);
-  const [loadingEchoProbRows, setLoadingEchoProbRows] = useState(false);
+  const [loadingDist, setLoadingDist] = useState(false);
+  const [loadingProb, setLoadingProb] = useState(false);
   const [message, setMessage] = useState("");
+  const [msgKind, setMsgKind] = useState<"info" | "success" | "error">("info");
+
+  const showMsg = (text: string, kind: "info" | "success" | "error" = "info") => {
+    setMessage(text);
+    setMsgKind(kind);
+  };
+
+  /* ── selected echo derivations ───── */
 
   const selectedEcho = useMemo(
-    () => echoes.find((echo) => echo.echoId === selectedEchoId) ?? null,
+    () => echoes.find((e) => e.echoId === selectedEchoId) ?? null,
     [echoes, selectedEchoId],
   );
 
   const occupiedSlots = useMemo(
-    () => new Set((selectedEcho?.currentSubstats ?? []).map((slot) => slot.slotNo)),
+    () => new Set((selectedEcho?.currentSubstats ?? []).map((s) => s.slotNo)),
     [selectedEcho],
   );
 
   const occupiedStats = useMemo(
-    () => new Set((selectedEcho?.currentSubstats ?? []).map((slot) => slot.statKey)),
+    () => new Set((selectedEcho?.currentSubstats ?? []).map((s) => s.statKey)),
     [selectedEcho],
   );
 
-  const availableSlots = useMemo(() => {
-    return [1, 2, 3, 4, 5].filter((x) => !occupiedSlots.has(x));
-  }, [occupiedSlots]);
+  const availableSlots = useMemo(() => [1, 2, 3, 4, 5].filter((x) => !occupiedSlots.has(x)), [occupiedSlots]);
 
-  const availableStatDefs = useMemo(() => {
-    return statDefs.filter((stat) => !occupiedStats.has(stat.statKey));
-  }, [statDefs, occupiedStats]);
+  const availableStatDefs = useMemo(
+    () => statDefs.filter((s) => !occupiedStats.has(s.statKey)),
+    [statDefs, occupiedStats],
+  );
 
   const selectedStat = useMemo(
-    () => availableStatDefs.find((stat) => stat.statKey === statKey) ?? availableStatDefs[0] ?? null,
+    () => availableStatDefs.find((s) => s.statKey === statKey) ?? availableStatDefs[0] ?? null,
     [availableStatDefs, statKey],
   );
 
@@ -117,144 +212,258 @@ export function RecordPage() {
 
   const distributionChartData = useMemo(() => {
     const rows = distribution?.rows ?? [];
-    return {
-      labels: rows.map((row) => row.displayName),
-      values: rows.map((row) => row.pGlobal),
-    };
+    return { labels: rows.map((r) => r.displayName), values: rows.map((r) => r.pGlobal) };
   }, [distribution]);
 
+  const createPresetName = useMemo(
+    () => expectationPresets.find((p) => p.presetId === createPresetId)?.name ?? null,
+    [expectationPresets, createPresetId],
+  );
+
+  /* ── effects ───────────────────── */
+
   useEffect(() => {
-    if (!selectedEchoId && echoes.length > 0) {
-      setSelectedEchoId(echoes[0].echoId);
-    }
+    if (!selectedEchoId && echoes.length > 0) setSelectedEchoId(echoes[0].echoId);
   }, [echoes, selectedEchoId]);
 
   useEffect(() => {
-    if (availableSlots.length === 0) {
-      return;
-    }
-    if (!availableSlots.includes(slotNo)) {
-      setSlotNo(availableSlots[0]);
-    }
+    if (availableSlots.length > 0 && !availableSlots.includes(slotNo)) setSlotNo(availableSlots[0]);
   }, [availableSlots, slotNo]);
 
   useEffect(() => {
-    if (!selectedStat) {
-      return;
-    }
-    if (statKey !== selectedStat.statKey) {
-      setStatKey(selectedStat.statKey);
-      return;
-    }
-    if (!selectedStat.tiers.some((t) => t.tierIndex === tierIndex)) {
-      setTierIndex(selectedStat.tiers[0]?.tierIndex ?? 1);
-    }
+    if (!selectedStat) return;
+    if (statKey !== selectedStat.statKey) { setStatKey(selectedStat.statKey); return; }
+    if (!selectedStat.tiers.some((t) => t.tierIndex === tierIndex)) setTierIndex(selectedStat.tiers[0]?.tierIndex ?? 1);
   }, [selectedStat, statKey, tierIndex]);
 
   useEffect(() => {
-    if (!statDefs.some((s) => s.statKey === createForm.mainStatKey) && statDefs.length > 0) {
-      setCreateForm((prev) => ({ ...prev, mainStatKey: statDefs[0].statKey }));
-    }
-  }, [createForm.mainStatKey, statDefs]);
+    if (!statDefs.some((s) => s.statKey === createMainStat) && statDefs.length > 0) setCreateMainStat(statDefs[0].statKey);
+  }, [createMainStat, statDefs]);
+
+  // auto-sync preset match
+  useEffect(() => {
+    const matched = findPresetByChain(expectationPresets, createExpStats, createExpOps);
+    setCreatePresetId(matched?.presetId ?? null);
+  }, [createExpStats, createExpOps, expectationPresets]);
+
+  // close preset menu on outside click
+  useEffect(() => {
+    if (!createPresetSelectorOpen) return;
+    const handler = (e: PointerEvent) => {
+      if (!(e.target instanceof Node)) return;
+      if (createPresetBtnRef.current?.contains(e.target)) return;
+      if (createPresetMenuRef.current?.contains(e.target)) return;
+      setCreatePresetSelectorOpen(false);
+    };
+    window.addEventListener("pointerdown", handler);
+    return () => window.removeEventListener("pointerdown", handler);
+  }, [createPresetSelectorOpen]);
 
   const loadHistory = async () => {
-    const rows = await getEventHistory({ limit: 200 });
+    const rows = await getEventHistory({ limit: 100 });
     setEventHistory(rows);
   };
 
   const loadDistribution = async () => {
-    setLoadingDistribution(true);
+    setLoadingDist(true);
     try {
       const result = await getGlobalDistribution(distributionFilter);
       setDistribution(result);
-      if (!selectedDistStatKey && result.rows.length > 0) {
-        setSelectedDistStatKey(result.rows[0].statKey);
-      }
-    } finally {
-      setLoadingDistribution(false);
-    }
+      if (!selectedDistStatKey && result.rows.length > 0) setSelectedDistStatKey(result.rows[0].statKey);
+    } finally { setLoadingDist(false); }
   };
 
   const loadEchoProbRows = async () => {
-    if (!selectedDistStatKey) {
-      setEchoProbRows([]);
-      return;
-    }
-    setLoadingEchoProbRows(true);
+    if (!selectedDistStatKey) { setEchoProbRows([]); return; }
+    setLoadingProb(true);
     try {
-      const rows = await getEchoesForStat({
-        statKey: selectedDistStatKey,
-        sortBy,
-        ...distributionFilter,
-      });
+      const rows = await getEchoesForStat({ statKey: selectedDistStatKey, sortBy, ...distributionFilter });
       setEchoProbRows(rows);
-    } finally {
-      setLoadingEchoProbRows(false);
-    }
+    } finally { setLoadingProb(false); }
   };
 
-  useEffect(() => {
-    void loadHistory();
-    void loadDistribution();
-  }, []);
+  useEffect(() => { void loadHistory(); void loadDistribution(); }, []);
 
-  useEffect(() => {
-    void loadDistribution();
-  }, [distributionFilter.startTime, distributionFilter.endTime, distributionFilter.mainStatKey, distributionFilter.costClass, distributionFilter.status]);
+  useEffect(() => { void loadDistribution(); }, [
+    distributionFilter.startTime, distributionFilter.endTime,
+    distributionFilter.mainStatKey, distributionFilter.costClass, distributionFilter.status,
+  ]);
 
-  useEffect(() => {
-    void loadEchoProbRows();
-  }, [selectedDistStatKey, sortBy, distributionFilter.startTime, distributionFilter.endTime, distributionFilter.mainStatKey, distributionFilter.costClass, distributionFilter.status]);
+  useEffect(() => { void loadEchoProbRows(); }, [
+    selectedDistStatKey, sortBy,
+    distributionFilter.startTime, distributionFilter.endTime,
+    distributionFilter.mainStatKey, distributionFilter.costClass, distributionFilter.status,
+  ]);
 
-  const handleCreateEcho = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setSaving(true);
-    setMessage("");
+  /* ── chain helpers for create form ─── */
 
-    try {
-      const created = await createEcho({
-        nickname: createForm.nickname || undefined,
-        mainStatKey: createForm.mainStatKey,
-        costClass: createForm.costClass,
-        status: createForm.status,
+  const pickAvailableStat = (used: string[]) => {
+    const found = statDefs.find((s) => !used.includes(s.statKey));
+    return found?.statKey ?? statDefs[0]?.statKey ?? "crit_rate";
+  };
+
+  const addCreateExp = () => {
+    setCreateExpStats((prev) => {
+      const next = pickAvailableStat(prev);
+      if (prev.includes(next)) { showMsg("没有可添加的期望词条。"); return prev; }
+      if (prev.length > 0) setCreateExpOps((ops) => [...ops, "gt"]);
+      setCreateActiveExpIdx(prev.length);
+      return [...prev, next];
+    });
+  };
+
+  const removeCreateExpAt = (idx: number) => {
+    setCreateExpStats((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      setCreateExpOps((prevOps) => {
+        if (prev.length <= 1) return [];
+        const ops = [...prevOps];
+        if (idx === 0) { ops.shift(); return ops; }
+        if (idx === prev.length - 1) { ops.pop(); return ops; }
+        ops[idx - 1] = "gt";
+        ops.splice(idx, 1);
+        return ops;
       });
+      return next;
+    });
+    setCreateActiveExpIdx((prev) => {
+      if (prev === null) return null;
+      if (prev === idx) return null;
+      return prev > idx ? prev - 1 : prev;
+    });
+  };
 
-      if (createForm.presetId) {
-        const preset = expectationPresets.find((x) => x.presetId === createForm.presetId);
-        if (preset && preset.items.length > 0) {
-          await setExpectations(created.echoId, preset.items);
-        }
-      }
+  const addCreateSlot = () => {
+    setCreateSlots((prev) => {
+      if (prev.length >= 5) { showMsg("最多5个初始槽位。"); return prev; }
+      const used = prev.map((x) => x.statKey);
+      const sk = pickAvailableStat(used);
+      if (used.includes(sk)) { showMsg("没有可添加的槽位词条。"); return prev; }
+      const ti = statMap.get(sk)?.tiers[0]?.tierIndex ?? 1;
+      setCreateActiveSlotIdx(prev.length);
+      return [...prev, { statKey: sk, tierIndex: ti }];
+    });
+  };
 
-      await refreshEchoes();
-      setSelectedEchoId(created.echoId);
-      setCreateForm((prev) => ({ ...prev, nickname: "" }));
-      setMessage("声骸创建成功，可直接继续强化。");
-    } catch (error) {
-      setMessage(String(error));
+  const removeCreateSlotAt = (idx: number) => {
+    setCreateSlots((prev) => prev.filter((_, i) => i !== idx));
+    setCreateActiveSlotIdx((prev) => {
+      if (prev === null) return null;
+      if (prev === idx) return null;
+      return prev > idx ? prev - 1 : prev;
+    });
+  };
+
+  const applyPresetToCreate = (preset: ExpectationPreset) => {
+    const chain = buildExpectationChain(preset.items);
+    setCreateExpStats(chain.stats);
+    setCreateExpOps(chain.ops);
+    setCreateActiveExpIdx(null);
+    setCreatePresetId(preset.presetId);
+    setCreatePresetSelectorOpen(false);
+    setCreatePresetNamingOpen(false);
+    showMsg(`已载入预设「${preset.name}」。`);
+  };
+
+  const openSaveCreatePreset = () => {
+    if (createExpStats.length === 0) { showMsg("请先添加期望词条。"); return; }
+    const d = new Date();
+    const defaultName = `新预设 ${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    setCreatePresetNamingValue(defaultName);
+    setCreatePresetNamingOpen(true);
+    requestAnimationFrame(() => createPresetNamingInputRef.current?.select());
+  };
+
+  const handleSaveCreatePreset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = createPresetNamingValue.trim();
+    if (!name) { showMsg("请输入预设名称。"); return; }
+    setSaving(true);
+    try {
+      const items = chainToExpectationItems(createExpStats, createExpOps);
+      const result = await saveExpectationPreset({ name, items });
+      await refreshExpectationPresets();
+      setCreatePresetId(result.presetId);
+      setCreatePresetNamingOpen(false);
+      setCreatePresetSelectorOpen(false);
+      showMsg(`已设为预设「${name}」。`, "success");
+    } catch (err) {
+      showMsg(String(err), "error");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleRecordEvent = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const resetCreateForm = () => {
+    setCreateNickname("");
+    setCreateMainStat(statDefs[0]?.statKey ?? "atk_pct");
+    setCreateCost(1);
+    setCreateStatus("tracking");
+    setCreateExpStats([]);
+    setCreateExpOps([]);
+    setCreateActiveExpIdx(null);
+    setCreateSlots([]);
+    setCreateActiveSlotIdx(null);
+    setCreatePresetId(null);
+    setCreatePresetNamingOpen(false);
+    setCreatePresetNamingValue("");
+  };
 
-    if (!selectedEchoId) {
-      setMessage("请先选择声骸。");
-      return;
+  /* ── handlers ──────────────────── */
+
+  const handleCreateEcho = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    showMsg("");
+
+    try {
+      const created = await createEcho({
+        nickname: createNickname || undefined,
+        mainStatKey: createMainStat,
+        costClass: createCost,
+        status: createStatus,
+      });
+
+      // apply expectations
+      const items = chainToExpectationItems(createExpStats, createExpOps);
+      if (items.length > 0) {
+        await setExpectations(created.echoId, items);
+      }
+
+      // apply initial slots
+      if (createSlots.length > 0) {
+        const uniqueSlots = Array.from(new Set(createSlots.map((x) => x.statKey)));
+        if (uniqueSlots.length !== createSlots.length) {
+          showMsg("初始槽位词条存在重复，已忽略槽位设置。", "error");
+        } else {
+          const mapped = createSlots.map((slot, idx) => ({
+            slotNo: idx + 1,
+            statKey: slot.statKey,
+            tierIndex: slot.tierIndex,
+          }));
+          await upsertBackfillState({ echoId: created.echoId, slots: mapped });
+        }
+      }
+
+      await refreshEchoes();
+      setSelectedEchoId(created.echoId);
+      resetCreateForm();
+      showMsg("声骸创建成功，可直接继续强化。", "success");
+    } catch (error) {
+      showMsg(String(error), "error");
+    } finally {
+      setSaving(false);
     }
-    if (!availableSlots.includes(slotNo)) {
-      setMessage("当前槽位不可用，请选择未占用槽位。");
-      return;
-    }
-    if (!selectedStat) {
-      setMessage("当前声骸没有可出的副词条。请更换声骸或检查状态。");
-      return;
-    }
+  };
+
+  const handleRecordEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEchoId) { showMsg("请先选择声骸。"); return; }
+    if (!availableSlots.includes(slotNo)) { showMsg("当前槽位不可用。"); return; }
+    if (!selectedStat) { showMsg("没有可出的副词条。"); return; }
 
     setSaving(true);
-    setMessage("");
+    showMsg("");
 
     try {
       const result = await appendOrderedEvent({
@@ -264,432 +473,553 @@ export function RecordPage() {
         tierIndex,
         eventTime: normalizeLocalTime(eventTimeLocal),
       });
-
       await Promise.all([refreshEchoes(), loadHistory(), loadDistribution()]);
       await loadEchoProbRows();
-      setMessage(`录入成功，eventId: ${result.eventId}`);
+      showMsg(`录入成功  ·  eventId: ${result.eventId.slice(0, 8)}`, "success");
     } catch (error) {
-      setMessage(String(error));
+      showMsg(String(error), "error");
     } finally {
       setSaving(false);
     }
   };
 
-  const savePreset = async () => {
-    const normalizedItems = presetDrafts
-      .filter((x) => x.statKey)
-      .map((x) => ({ statKey: x.statKey, rank: Number(x.rank) || 1 }));
+  /* ── render helpers ────────────── */
 
-    if (!presetName.trim()) {
-      setMessage("请填写预设名称。");
-      return;
-    }
-    if (normalizedItems.length === 0) {
-      setMessage("预设至少需要一个词条。");
-      return;
-    }
+  const renderExpChainEditor = (
+    stats: string[],
+    ops: RelOp[],
+    activeIdx: number | null,
+    setStats: React.Dispatch<React.SetStateAction<string[]>>,
+    setOps: React.Dispatch<React.SetStateAction<RelOp[]>>,
+    setActiveIdx: React.Dispatch<React.SetStateAction<number | null>>,
+    addFn: () => void,
+    removeFn: (idx: number) => void,
+  ) => (
+    <div className="chain-row">
+      {stats.length === 0 ? <span className="chain-empty">点击 + 添加</span> : null}
+      {stats.map((sk, idx) => {
+        const stat = statMap.get(sk);
+        const selected = activeIdx === idx;
+        const availStats = statDefs.filter((x) => x.statKey === sk || !stats.includes(x.statKey));
+        return (
+          <Fragment key={`exp-${idx}-${sk}`}>
+            <div className="chain-fragment">
+              <div
+                className={selected ? "chain-item active" : "chain-item"}
+                onClick={() => setActiveIdx(idx)}
+                onContextMenu={(e) => { e.preventDefault(); removeFn(idx); }}
+                title="单击编辑，右键删除"
+              >
+                {selected ? (
+                  <select
+                    value={sk}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setStats((prev) => prev.map((item, i) => (i === idx ? v : item)));
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {availStats.map((s) => (
+                      <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span>{stat?.displayName ?? sk}</span>
+                )}
+                <button
+                  type="button" className="chain-remove-btn"
+                  onClick={(e) => { e.stopPropagation(); removeFn(idx); }}
+                  title="删除"
+                >×</button>
+              </div>
+              {idx < ops.length ? (
+                <button
+                  type="button" className="chain-op"
+                  onClick={() => setOps((prev) => prev.map((x, i) => (i === idx ? (x === "gt" ? "eq" : "gt") : x)))}
+                  title="点击切换 > 或 ="
+                >
+                  {ops[idx] === "gt" ? ">" : "="}
+                </button>
+              ) : null}
+            </div>
+          </Fragment>
+        );
+      })}
+      <button type="button" className="chain-add" onClick={addFn}>+</button>
+    </div>
+  );
 
-    setSaving(true);
-    setMessage("");
-    try {
-      const result = await saveExpectationPreset({
-        presetId: editingPresetId ?? undefined,
-        name: presetName.trim(),
-        items: normalizedItems,
-      });
-      await refreshExpectationPresets();
-      setEditingPresetId(result.presetId);
-      setMessage("期望词条预设已保存。");
-    } catch (error) {
-      setMessage(String(error));
-    } finally {
-      setSaving(false);
-    }
-  };
+  const renderSlotEditor = (
+    slots: SlotDraft[],
+    activeIdx: number | null,
+    setSlots: React.Dispatch<React.SetStateAction<SlotDraft[]>>,
+    setActiveIdx: React.Dispatch<React.SetStateAction<number | null>>,
+    addFn: () => void,
+    removeFn: (idx: number) => void,
+  ) => (
+    <div className="chain-row">
+      {slots.length === 0 ? <span className="chain-empty">点击 + 添加初始词条</span> : null}
+      {slots.map((slot, idx) => {
+        const stat = statMap.get(slot.statKey);
+        const selected = activeIdx === idx;
+        const currentUsed = slots.map((x) => x.statKey);
+        const availStats = statDefs.filter(
+          (x) => x.statKey === slot.statKey || !currentUsed.includes(x.statKey),
+        );
+        const tiers = statMap.get(slot.statKey)?.tiers ?? [];
 
-  const applyPresetToSelectedEcho = async (preset: ExpectationPreset) => {
-    if (!selectedEchoId) {
-      setMessage("请先选择要应用预设的声骸。");
-      return;
-    }
-    setSaving(true);
-    setMessage("");
-    try {
-      await setExpectations(selectedEchoId, preset.items);
-      await refreshEchoes();
-      setMessage(`预设「${preset.name}」已应用到当前声骸。`);
-    } catch (error) {
-      setMessage(String(error));
-    } finally {
-      setSaving(false);
-    }
-  };
+        return (
+          <Fragment key={`slot-${idx}-${slot.statKey}`}>
+            <div className="chain-fragment">
+              <div
+                className={selected ? "chain-item active" : "chain-item"}
+                onClick={() => setActiveIdx(idx)}
+                onContextMenu={(e) => { e.preventDefault(); removeFn(idx); }}
+                title="单击编辑，右键删除"
+              >
+                <span className="slot-label">S{idx + 1}</span>
+                {selected ? (
+                  <div className="inline-row slot-inline-edit">
+                    <select
+                      value={slot.statKey}
+                      onChange={(e) => {
+                        const nk = e.target.value;
+                        const nt = statMap.get(nk)?.tiers[0]?.tierIndex ?? 1;
+                        setSlots((prev) => prev.map((item, i) => (i === idx ? { statKey: nk, tierIndex: nt } : item)));
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {availStats.map((s) => (
+                        <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={slot.tierIndex}
+                      onChange={(e) => {
+                        const nt = Number(e.target.value);
+                        setSlots((prev) => prev.map((item, i) => (i === idx ? { ...item, tierIndex: nt } : item)));
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {tiers.map((t) => (
+                        <option key={t.tierIndex} value={t.tierIndex}>
+                          档{t.tierIndex}: {formatScaledValue(stat?.unit ?? "flat", t.valueScaled)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <span>{stat?.displayName ?? slot.statKey} / 档{slot.tierIndex}</span>
+                )}
+                <button
+                  type="button" className="chain-remove-btn"
+                  onClick={(e) => { e.stopPropagation(); removeFn(idx); }}
+                  title="删除"
+                >×</button>
+              </div>
+            </div>
+          </Fragment>
+        );
+      })}
+      <button type="button" className="chain-add" onClick={addFn} disabled={slots.length >= 5}>+</button>
+    </div>
+  );
 
-  const loadPresetToEditor = (preset: ExpectationPreset) => {
-    setEditingPresetId(preset.presetId);
-    setPresetName(preset.name);
-    setPresetDrafts(
-      preset.items.map((x) => ({
-        statKey: x.statKey,
-        rank: x.rank,
-      })),
-    );
-  };
-
-  const removePreset = async (presetId: string) => {
-    if (!window.confirm("确认删除该预设？")) {
-      return;
-    }
-    setSaving(true);
-    setMessage("");
-    try {
-      await deleteExpectationPreset(presetId);
-      await refreshExpectationPresets();
-      if (editingPresetId === presetId) {
-        setEditingPresetId(null);
-        setPresetName("");
-        setPresetDrafts([{ statKey: statDefs[0]?.statKey ?? "crit_rate", rank: 1 }]);
-      }
-      setMessage("预设已删除。");
-    } catch (error) {
-      setMessage(String(error));
-    } finally {
-      setSaving(false);
-    }
-  };
+  /* ── main render ───────────────── */
 
   return (
-    <section className="page">
-      <div className="dashboard-grid">
-        <div className="dashboard-column">
-          <form className="card form-grid" onSubmit={handleCreateEcho}>
-            <h3>新建声骸</h3>
-            <label>
-              昵称
-              <input
-                value={createForm.nickname}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, nickname: e.target.value }))}
-                placeholder="可选"
-              />
-            </label>
+    <section className="page record-page">
+      {/* Toast */}
+      {message ? (
+        <div className={`toast toast-${msgKind}`} onClick={() => showMsg("")}>{message}</div>
+      ) : null}
 
-            <label>
-              主词条
-              <select
-                value={createForm.mainStatKey}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, mainStatKey: e.target.value }))}
-              >
-                {statDefs.map((stat) => (
-                  <option key={stat.statKey} value={stat.statKey}>
-                    {stat.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              Cost
-              <select
-                value={createForm.costClass}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, costClass: Number(e.target.value) }))}
-              >
-                <option value={1}>1</option>
-                <option value={3}>3</option>
-                <option value={4}>4</option>
-              </select>
-            </label>
-
-            <label>
-              状态
-              <select
-                value={createForm.status}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, status: e.target.value as EchoStatus }))}
-              >
-                <option value="tracking">tracking</option>
-                <option value="paused">paused</option>
-                <option value="abandoned">abandoned</option>
-                <option value="completed">completed</option>
-              </select>
-            </label>
-
-            <label>
-              期望预设（可选）
-              <select
-                value={createForm.presetId}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, presetId: e.target.value }))}
-              >
-                <option value="">不应用预设</option>
-                {expectationPresets.map((preset) => (
-                  <option key={preset.presetId} value={preset.presetId}>
-                    {preset.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <button type="submit" disabled={saving}>
-              创建并开始强化
+      {/* ═══ 工作区 ═══ */}
+      <div className="record-workspace">
+        {/* ── 左：新建/选择声骸 ── */}
+        <div className="record-col-create">
+          {/* 新建声骸 - 折叠式卡片 */}
+          <div className="card record-card">
+            <button
+              type="button"
+              className={`record-section-toggle ${createExpanded ? "is-open" : ""}`}
+              onClick={() => setCreateExpanded((v) => !v)}
+            >
+              <span className="record-section-title">新建声骸</span>
+              <span className="record-toggle-icon">{createExpanded ? "▾" : "▸"}</span>
             </button>
-          </form>
 
-          <form className="card form-grid" onSubmit={handleRecordEvent}>
-            <h3>强化录入</h3>
-            <label>
-              声骸
+            {createExpanded ? (
+              <form className="record-create-form" onSubmit={handleCreateEcho}>
+                {/* 基本信息 */}
+                <div className="record-create-basics">
+                  <label className="record-field">
+                    <span className="record-field-label">昵称</span>
+                    <input
+                      value={createNickname}
+                      onChange={(e) => setCreateNickname(e.target.value)}
+                      placeholder="可选"
+                    />
+                  </label>
+                  <label className="record-field">
+                    <span className="record-field-label">主词条</span>
+                    <select value={createMainStat} onChange={(e) => setCreateMainStat(e.target.value)}>
+                      {statDefs.map((s) => (
+                        <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="record-field record-field-short">
+                    <span className="record-field-label">Cost</span>
+                    <select value={createCost} onChange={(e) => setCreateCost(Number(e.target.value))}>
+                      <option value={1}>1</option>
+                      <option value={3}>3</option>
+                      <option value={4}>4</option>
+                    </select>
+                  </label>
+                  <label className="record-field record-field-short">
+                    <span className="record-field-label">状态</span>
+                    <select value={createStatus} onChange={(e) => setCreateStatus(e.target.value as EchoStatus)}>
+                      {(Object.keys(STATUS_LABELS) as EchoStatus[]).map((s) => (
+                        <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {/* 期望词条链 */}
+                <div className="record-chain-section">
+                  <div className="record-chain-header">
+                    <span className="record-field-label">期望词条</span>
+                    <div className="record-preset-inline">
+                      <button
+                        type="button"
+                        ref={createPresetBtnRef}
+                        className={createPresetSelectorOpen ? "manage-btn-active" : ""}
+                        onClick={() => {
+                          setCreatePresetSelectorOpen((v) => !v);
+                          setCreatePresetNamingOpen(false);
+                        }}
+                      >
+                        预设：{createPresetName ?? "未选择"}
+                      </button>
+                    </div>
+                  </div>
+                  {renderExpChainEditor(
+                    createExpStats, createExpOps, createActiveExpIdx,
+                    setCreateExpStats, setCreateExpOps, setCreateActiveExpIdx,
+                    addCreateExp, removeCreateExpAt,
+                  )}
+                  {/* Preset selector popup */}
+                  {createPresetSelectorOpen ? (
+                    <div ref={createPresetMenuRef} className="record-preset-menu">
+                      {expectationPresets.map((p) => (
+                        <button
+                          key={p.presetId} type="button"
+                          className={createPresetId === p.presetId ? "preset-option-active" : ""}
+                          onClick={() => applyPresetToCreate(p)}
+                        >
+                          <span className="record-preset-menu-name">{p.name}</span>
+                          <span className="record-preset-menu-detail">
+                            {[...p.items]
+                              .sort((a, b) => a.rank - b.rank)
+                              .map((x) => statMap.get(x.statKey)?.displayName ?? x.statKey)
+                              .join(" / ")}
+                          </span>
+                        </button>
+                      ))}
+                      {expectationPresets.length === 0 ? (
+                        <span className="chain-empty" style={{ padding: "6px 8px" }}>暂无预设</span>
+                      ) : null}
+                      <span className="preset-option-divider" />
+                      {createPresetNamingOpen ? (
+                        <form
+                          className="record-preset-naming-row"
+                          onSubmit={(e) => { void handleSaveCreatePreset(e); }}
+                        >
+                          <input
+                            ref={createPresetNamingInputRef}
+                            value={createPresetNamingValue}
+                            onChange={(e) => setCreatePresetNamingValue(e.target.value)}
+                            placeholder="输入预设名称"
+                          />
+                          <button type="submit" disabled={saving}>确定</button>
+                        </form>
+                      ) : (
+                        <button
+                          type="button"
+                          className="preset-create-option"
+                          onClick={openSaveCreatePreset}
+                          disabled={saving}
+                        >
+                          设为预设
+                        </button>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* 初始词条位 */}
+                <div className="record-chain-section">
+                  <span className="record-field-label">初始词条（可选，用于补录已有词条）</span>
+                  {renderSlotEditor(
+                    createSlots, createActiveSlotIdx,
+                    setCreateSlots, setCreateActiveSlotIdx,
+                    addCreateSlot, removeCreateSlotAt,
+                  )}
+                </div>
+
+                {/* 提交 */}
+                <div className="record-create-actions">
+                  <button type="submit" className="btn-primary" disabled={saving}>
+                    创建声骸
+                  </button>
+                  <button type="button" onClick={resetCreateForm} disabled={saving}>
+                    重置
+                  </button>
+                </div>
+              </form>
+            ) : null}
+          </div>
+
+          {/* 当前声骸信息 */}
+          {selectedEcho ? (
+            <div className="card record-card record-echo-info">
+              <div className="record-echo-info-header">
+                <span className="record-echo-name">
+                  {selectedEcho.nickname ?? selectedEcho.echoId.slice(0, 8)}
+                </span>
+                <span className={`record-badge ${STATUS_BADGE_CLASS[selectedEcho.status]}`}>
+                  {STATUS_LABELS[selectedEcho.status]}
+                </span>
+                <span className="record-badge badge-neutral">
+                  Cost {selectedEcho.costClass}
+                </span>
+                <span className="record-badge badge-neutral">
+                  {statMap.get(selectedEcho.mainStatKey)?.displayName ?? selectedEcho.mainStatKey}
+                </span>
+              </div>
+              <div className="record-echo-slots">
+                <span className="record-echo-slots-label">
+                  词条 {selectedEcho.openedSlotsCount}/5
+                </span>
+                {selectedEcho.currentSubstats.length === 0 ? (
+                  <span className="chain-empty">暂无词条</span>
+                ) : (
+                  [...selectedEcho.currentSubstats]
+                    .sort((a, b) => a.slotNo - b.slotNo)
+                    .map((slot) => {
+                      const st = statMap.get(slot.statKey);
+                      return (
+                        <span
+                          key={slot.slotNo}
+                          className={`slot-pill ${slot.source === "ordered_event" ? "slot-pill-locked" : ""}`}
+                          title={`${st?.displayName ?? slot.statKey} 档${slot.tierIndex}：${formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}`}
+                        >
+                          {slot.slotNo}: {statKeyToAbbr(slot.statKey)}
+                          <small className="slot-pill-value"> 档{slot.tierIndex}</small>
+                        </span>
+                      );
+                    })
+                )}
+              </div>
+              {selectedEcho.expectations.length > 0 ? (
+                <div className="record-echo-exp">
+                  <span className="chain-label">期望：</span>
+                  {[...selectedEcho.expectations]
+                    .sort((a, b) => a.rank - b.rank || a.statKey.localeCompare(b.statKey))
+                    .map((exp, idx, arr) => (
+                      <Fragment key={idx}>
+                        {idx > 0 ? (
+                          <span className="record-exp-op">
+                            {arr[idx].rank === arr[idx - 1].rank ? "=" : ">"}
+                          </span>
+                        ) : null}
+                        <span className="record-exp-tag">
+                          {statMap.get(exp.statKey)?.displayName ?? exp.statKey}
+                        </span>
+                      </Fragment>
+                    ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        {/* ── 右：强化录入 ── */}
+        <div className="record-col-event">
+          <form className="card record-card record-event-form" onSubmit={handleRecordEvent}>
+            <span className="record-section-title">强化录入</span>
+
+            {/* 声骸选择 */}
+            <label className="record-field">
+              <span className="record-field-label">目标声骸</span>
               <select value={selectedEchoId} onChange={(e) => setSelectedEchoId(e.target.value)}>
                 <option value="">请选择</option>
-                {echoes.map((echo) => (
-                  <option key={echo.echoId} value={echo.echoId}>
-                    {(echo.nickname ?? echo.echoId.slice(0, 8)) + ` (${echo.openedSlotsCount}/5)`}
-                  </option>
-                ))}
+                {echoes
+                  .filter((e) => e.status === "tracking" || e.status === "paused")
+                  .map((echo) => (
+                    <option key={echo.echoId} value={echo.echoId}>
+                      {(echo.nickname ?? echo.echoId.slice(0, 8)) + ` · ${echo.openedSlotsCount}/5`}
+                    </option>
+                  ))}
+                {echoes.filter((e) => e.status !== "tracking" && e.status !== "paused").length > 0 ? (
+                  <optgroup label="── 其他状态 ──">
+                    {echoes
+                      .filter((e) => e.status !== "tracking" && e.status !== "paused")
+                      .map((echo) => (
+                        <option key={echo.echoId} value={echo.echoId}>
+                          {(echo.nickname ?? echo.echoId.slice(0, 8)) + ` · ${echo.openedSlotsCount}/5 [${STATUS_LABELS[echo.status]}]`}
+                        </option>
+                      ))}
+                  </optgroup>
+                ) : null}
               </select>
             </label>
 
-            <label>
-              槽位（仅可用）
-              <select value={slotNo} onChange={(e) => setSlotNo(Number(e.target.value))}>
-                {availableSlots.map((x) => (
-                  <option key={x} value={x}>
-                    {x}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {/* 录入字段 - 紧凑布局 */}
+            <div className="record-event-fields">
+              <label className="record-field record-field-short">
+                <span className="record-field-label">槽位</span>
+                <select value={slotNo} onChange={(e) => setSlotNo(Number(e.target.value))}>
+                  {availableSlots.map((x) => (
+                    <option key={x} value={x}>S{x}</option>
+                  ))}
+                </select>
+              </label>
 
-            <label>
-              词条（自动排除已存在）
-              <select value={selectedStat?.statKey ?? ""} onChange={(e) => setStatKey(e.target.value)}>
-                {availableStatDefs.map((stat) => (
-                  <option key={stat.statKey} value={stat.statKey}>
-                    {stat.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <label className="record-field">
+                <span className="record-field-label">词条</span>
+                <select value={selectedStat?.statKey ?? ""} onChange={(e) => setStatKey(e.target.value)}>
+                  {availableStatDefs.map((s) => (
+                    <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
+                  ))}
+                </select>
+              </label>
 
-            <label>
-              档位
-              <select value={tierIndex} onChange={(e) => setTierIndex(Number(e.target.value))}>
-                {(selectedStat?.tiers ?? []).map((tier) => (
-                  <option key={tier.tierIndex} value={tier.tierIndex}>
-                    档位 {tier.tierIndex} ({formatScaledValue(selectedStat?.unit ?? "flat", tier.valueScaled)})
-                  </option>
-                ))}
-              </select>
-            </label>
+              <label className="record-field">
+                <span className="record-field-label">档位</span>
+                <select value={tierIndex} onChange={(e) => setTierIndex(Number(e.target.value))}>
+                  {(selectedStat?.tiers ?? []).map((t) => (
+                    <option key={t.tierIndex} value={t.tierIndex}>
+                      档{t.tierIndex} ({formatScaledValue(selectedStat?.unit ?? "flat", t.valueScaled)})
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label>
-              事件时间
-              <input
-                type="datetime-local"
-                value={eventTimeLocal}
-                onChange={(e) => setEventTimeLocal(e.target.value)}
-              />
-            </label>
+              <label className="record-field">
+                <span className="record-field-label">时间</span>
+                <input
+                  type="datetime-local"
+                  value={eventTimeLocal}
+                  onChange={(e) => setEventTimeLocal(e.target.value)}
+                />
+              </label>
+            </div>
 
-            <div className="inline-row">
-              <span>当前值预览：{formatScaledValue(selectedStat?.unit ?? "flat", selectedTierValue)}</span>
+            {/* 预览 + 提交 */}
+            <div className="record-event-submit-row">
+              <span className="record-preview-value">
+                {selectedStat ? (
+                  <>
+                    {selectedStat.displayName} 档{tierIndex} = {formatScaledValue(selectedStat.unit, selectedTierValue)}
+                  </>
+                ) : "—"}
+              </span>
               <button
-                type="submit"
+                type="submit" className="btn-primary"
                 disabled={saving || !selectedEchoId || availableSlots.length === 0 || availableStatDefs.length === 0}
               >
-                保存事件并刷新分析
+                录入
               </button>
             </div>
           </form>
 
-          <div className="card split-card">
-            <div>
-              <h3>期望词条预设编辑</h3>
-              <label>
-                预设名称
-                <input
-                  value={presetName}
-                  onChange={(e) => setPresetName(e.target.value)}
-                  placeholder="例如：双爆输出模板"
-                />
-              </label>
-
-              {presetDrafts.map((item, idx) => (
-                <div className="inline-row" key={`preset-draft-${idx}`}>
-                  <select
-                    value={item.statKey}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setPresetDrafts((prev) =>
-                        prev.map((row, rowIdx) => (rowIdx === idx ? { ...row, statKey: next } : row)),
-                      );
-                    }}
+          {/* 最近事件 */}
+          <div className="card record-card record-history-card">
+            <span className="record-section-title">最近录入</span>
+            <div className="record-history-list">
+              {eventHistory.slice(0, 20).map((row) => {
+                const st = statDefs.find((s) => s.statKey === row.statKey);
+                return (
+                  <div
+                    key={row.eventId}
+                    className={`record-history-item ${row.echoId === selectedEchoId ? "record-history-active" : ""}`}
+                    onClick={() => setSelectedEchoId(row.echoId)}
+                    title={`点击切换到此声骸 · ${row.eventId}`}
                   >
-                    {statDefs.map((stat) => (
-                      <option key={stat.statKey} value={stat.statKey}>
-                        {stat.displayName}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    min={1}
-                    value={item.rank}
-                    onChange={(e) => {
-                      const next = Number(e.target.value);
-                      setPresetDrafts((prev) =>
-                        prev.map((row, rowIdx) => (rowIdx === idx ? { ...row, rank: next } : row)),
-                      );
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setPresetDrafts((prev) => prev.filter((_, rowIdx) => rowIdx !== idx))}
-                  >
-                    删除
-                  </button>
-                </div>
-              ))}
-
-              <div className="inline-row">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setPresetDrafts((prev) => [
-                      ...prev,
-                      { statKey: statDefs[0]?.statKey ?? "crit_rate", rank: 1 },
-                    ])
-                  }
-                >
-                  添加词条
-                </button>
-                <button type="button" onClick={() => void savePreset()} disabled={saving}>
-                  {editingPresetId ? "覆盖保存" : "保存预设"}
-                </button>
-              </div>
+                    <span className="record-history-echo">
+                      {row.echoNickname ?? row.echoId.slice(0, 8)}
+                    </span>
+                    <span className="record-history-detail">
+                      S{row.slotNo} · {st?.displayName ?? row.statKey} · 档{row.tierIndex}
+                      {st ? ` = ${formatScaledValue(st.unit, row.valueScaled)}` : ""}
+                    </span>
+                    <span className="record-history-time">
+                      {new Date(row.eventTime).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  </div>
+                );
+              })}
+              {eventHistory.length === 0 ? (
+                <span className="chain-empty" style={{ padding: "12px" }}>暂无录入记录</span>
+              ) : null}
             </div>
-
-            <div>
-              <h3>已保存预设</h3>
-              <table className="table compact-table">
-                <thead>
-                  <tr>
-                    <th>名称</th>
-                    <th>词条</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {expectationPresets.map((preset) => (
-                    <tr key={preset.presetId}>
-                      <td>{preset.name}</td>
-                      <td>{formatPresetSummary(preset.items)}</td>
-                      <td>
-                        <div className="inline-row">
-                          <button type="button" onClick={() => loadPresetToEditor(preset)}>
-                            载入
-                          </button>
-                          <button type="button" onClick={() => void applyPresetToSelectedEcho(preset)}>
-                            应用当前声骸
-                          </button>
-                          <button type="button" onClick={() => void removePreset(preset.presetId)}>
-                            删除
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="card">
-            <h3>最近事件</h3>
-            <table className="table compact-table">
-              <thead>
-                <tr>
-                  <th>seq</th>
-                  <th>声骸</th>
-                  <th>槽位</th>
-                  <th>词条</th>
-                  <th>档位</th>
-                  <th>值</th>
-                </tr>
-              </thead>
-              <tbody>
-                {eventHistory.map((row) => {
-                  const stat = statDefs.find((s) => s.statKey === row.statKey);
-                  return (
-                    <tr key={row.eventId}>
-                      <td>{row.analysisSeq}</td>
-                      <td>{row.echoNickname ?? row.echoId.slice(0, 8)}</td>
-                      <td>{row.slotNo}</td>
-                      <td>{stat?.displayName ?? row.statKey}</td>
-                      <td>{row.tierIndex}</td>
-                      <td>{formatScaledValue(stat?.unit ?? "flat", row.valueScaled)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           </div>
         </div>
+      </div>
 
-        <div className="dashboard-column">
-          <div className="card form-grid">
-            <h3>实时分布筛选（自动刷新）</h3>
-            <label>
-              开始时间
+      {/* ═══ 实时分析区 ═══ */}
+      <div className="record-analysis">
+        {/* 筛选条件 - 紧凑行 */}
+        <div className="card record-card record-filter-bar">
+          <span className="record-section-title">实时分析</span>
+          <div className="record-filter-fields">
+            <label className="record-filter-field">
+              开始
               <input
                 type="datetime-local"
                 value={distributionFilter.startTime ? distributionFilter.startTime.slice(0, 16) : ""}
                 onChange={(e) =>
                   setDistributionFilter((prev) => ({
-                    ...prev,
-                    startTime: e.target.value ? new Date(e.target.value).toISOString() : undefined,
+                    ...prev, startTime: e.target.value ? new Date(e.target.value).toISOString() : undefined,
                   }))
                 }
               />
             </label>
-            <label>
-              结束时间
+            <label className="record-filter-field">
+              结束
               <input
                 type="datetime-local"
                 value={distributionFilter.endTime ? distributionFilter.endTime.slice(0, 16) : ""}
                 onChange={(e) =>
                   setDistributionFilter((prev) => ({
-                    ...prev,
-                    endTime: e.target.value ? new Date(e.target.value).toISOString() : undefined,
+                    ...prev, endTime: e.target.value ? new Date(e.target.value).toISOString() : undefined,
                   }))
                 }
               />
             </label>
-            <label>
+            <label className="record-filter-field">
               主词条
               <select
                 value={distributionFilter.mainStatKey ?? ""}
                 onChange={(e) =>
-                  setDistributionFilter((prev) => ({
-                    ...prev,
-                    mainStatKey: e.target.value || undefined,
-                  }))
+                  setDistributionFilter((prev) => ({ ...prev, mainStatKey: e.target.value || undefined }))
                 }
               >
                 <option value="">全部</option>
-                {statDefs.map((stat) => (
-                  <option key={stat.statKey} value={stat.statKey}>
-                    {stat.displayName}
-                  </option>
+                {statDefs.map((s) => (
+                  <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
                 ))}
               </select>
             </label>
-            <label>
+            <label className="record-filter-field">
               Cost
               <select
                 value={distributionFilter.costClass ?? ""}
                 onChange={(e) =>
-                  setDistributionFilter((prev) => ({
-                    ...prev,
-                    costClass: e.target.value ? Number(e.target.value) : undefined,
-                  }))
+                  setDistributionFilter((prev) => ({ ...prev, costClass: e.target.value ? Number(e.target.value) : undefined }))
                 }
               >
                 <option value="">全部</option>
@@ -698,67 +1028,82 @@ export function RecordPage() {
                 <option value="4">4</option>
               </select>
             </label>
-            <label>
+            <label className="record-filter-field">
               状态
               <select
                 value={distributionFilter.status ?? ""}
                 onChange={(e) =>
-                  setDistributionFilter((prev) => ({
-                    ...prev,
-                    status: e.target.value || undefined,
-                  }))
+                  setDistributionFilter((prev) => ({ ...prev, status: e.target.value || undefined }))
                 }
               >
                 <option value="">全部</option>
-                <option value="tracking">tracking</option>
-                <option value="paused">paused</option>
-                <option value="abandoned">abandoned</option>
-                <option value="completed">completed</option>
+                {(Object.keys(STATUS_LABELS) as EchoStatus[]).map((s) => (
+                  <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                ))}
               </select>
             </label>
           </div>
+        </div>
 
-          <div className="card">
-            <h3>全局概率图 {loadingDistribution ? "(更新中...)" : ""}</h3>
+        {/* 图表 + 分布表 + 命中列表 */}
+        <div className="record-analysis-grid">
+          {/* 概率图 */}
+          <div className="card record-card">
+            <div className="record-card-header">
+              <span className="record-section-title">全局概率图</span>
+              <span className="record-card-meta">
+                总事件 {distribution?.totalEvents ?? 0}
+                {loadingDist ? " · 更新中..." : ""}
+              </span>
+            </div>
             <BarChart labels={distributionChartData.labels} values={distributionChartData.values} />
           </div>
 
-          <div className="card">
-            <h3>词条分布（点击联动命中列表）</h3>
-            <table className="table compact-table">
-              <thead>
-                <tr>
-                  <th>词条</th>
-                  <th>P(global)</th>
-                  <th>Wilson CI</th>
-                  <th>Bayes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(distribution?.rows ?? []).map((row) => (
-                  <tr
-                    key={row.statKey}
-                    className={row.statKey === selectedDistStatKey ? "active-row" : ""}
-                    onClick={() => setSelectedDistStatKey(row.statKey)}
-                  >
-                    <td>{row.displayName}</td>
-                    <td>{toPercent(row.pGlobal)}</td>
-                    <td>
-                      {toPercent(row.ciFreqLow)} ~ {toPercent(row.ciFreqHigh)}
-                    </td>
-                    <td>
-                      {toPercent(row.bayesMean)} ({toPercent(row.bayesLow)} ~ {toPercent(row.bayesHigh)})
-                    </td>
+          {/* 分布详情 */}
+          <div className="card record-card">
+            <span className="record-section-title">词条分布（点击联动）</span>
+            <div className="record-dist-table-wrap">
+              <table className="table compact-table">
+                <thead>
+                  <tr>
+                    <th>词条</th>
+                    <th>次数</th>
+                    <th>P(gbl)</th>
+                    <th>Wilson CI</th>
+                    <th>Bayes</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(distribution?.rows ?? []).map((row) => (
+                    <tr
+                      key={row.statKey}
+                      className={row.statKey === selectedDistStatKey ? "active-row" : ""}
+                      onClick={() => setSelectedDistStatKey(row.statKey)}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <td>{row.displayName}</td>
+                      <td>{row.count}</td>
+                      <td>{toPercent(row.pGlobal)}</td>
+                      <td className="record-ci-cell">
+                        {toPercent(row.ciFreqLow)} ~ {toPercent(row.ciFreqHigh)}
+                      </td>
+                      <td className="record-ci-cell">
+                        {toPercent(row.bayesMean)} ({toPercent(row.bayesLow)}~{toPercent(row.bayesHigh)})
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
-          <div className="card">
-            <div className="inline-row">
-              <h3>词条命中声骸列表 {selectedDistStatKey ? `(${selectedDistStatKey})` : ""}</h3>
-              <label>
+          {/* 命中声骸 */}
+          <div className="card record-card">
+            <div className="record-card-header">
+              <span className="record-section-title">
+                命中列表 {selectedDistStatKey ? `· ${statMap.get(selectedDistStatKey)?.displayName ?? selectedDistStatKey}` : ""}
+              </span>
+              <label className="record-sort-label">
                 排序
                 <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
                   <option value="pFinal">P(final)</option>
@@ -768,35 +1113,39 @@ export function RecordPage() {
                 </select>
               </label>
             </div>
-
-            <table className="table compact-table">
-              <thead>
-                <tr>
-                  <th>声骸</th>
-                  <th>槽位</th>
-                  <th>权重</th>
-                  <th>P(next)</th>
-                  <th>P(final)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {echoProbRows.map((row) => (
-                  <tr key={row.echoId}>
-                    <td>{row.nickname ?? row.echoId.slice(0, 8)}</td>
-                    <td>{row.openedSlotsCount}/5</td>
-                    <td>{row.expectationRankMin}</td>
-                    <td>{toPercent(row.pNext)}</td>
-                    <td>{toPercent(row.pFinal)}</td>
+            <div className="record-dist-table-wrap">
+              <table className="table compact-table">
+                <thead>
+                  <tr>
+                    <th>声骸</th>
+                    <th>槽位</th>
+                    <th>权重</th>
+                    <th>P(next)</th>
+                    <th>P(final)</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {loadingEchoProbRows ? <p className="hint">命中列表更新中...</p> : null}
+                </thead>
+                <tbody>
+                  {echoProbRows.map((row) => (
+                    <tr key={row.echoId} style={{ cursor: "pointer" }} onClick={() => setSelectedEchoId(row.echoId)}>
+                      <td>{row.nickname ?? row.echoId.slice(0, 8)}</td>
+                      <td>{row.openedSlotsCount}/5</td>
+                      <td>{row.expectationRankMin}</td>
+                      <td>{toPercent(row.pNext)}</td>
+                      <td>{toPercent(row.pFinal)}</td>
+                    </tr>
+                  ))}
+                  {echoProbRows.length === 0 && !loadingProb ? (
+                    <tr><td colSpan={5} className="chain-empty">
+                      {selectedDistStatKey ? "无匹配声骸" : "请点击左侧词条行"}
+                    </td></tr>
+                  ) : null}
+                </tbody>
+              </table>
+              {loadingProb ? <p className="hint" style={{ textAlign: "center", padding: "8px" }}>加载中...</p> : null}
+            </div>
           </div>
         </div>
       </div>
-
-      {message ? <p className="message">{message}</p> : null}
     </section>
   );
 }

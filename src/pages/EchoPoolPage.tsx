@@ -2136,6 +2136,7 @@ export function EchoPoolPage() {
             </label>
           </div>
         </div>
+        <div className="echo-table-scroll">
         <table className="table echo-table">
           <colgroup>
             <col className="echo-col-select" style={{ width: `${columnWidths.select}px` }} />
@@ -2634,6 +2635,7 @@ export function EchoPoolPage() {
             ) : null}
           </tbody>
         </table>
+        </div>
       </div>
     </section>
   );
