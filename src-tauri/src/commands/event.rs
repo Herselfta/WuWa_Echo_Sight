@@ -8,8 +8,9 @@ use crate::db::{
     AppState, DEFAULT_DAY_BOUNDARY_HOUR,
 };
 use crate::domain::types::{
-    AppendOrderedEventInput, AppendOrderedEventOutput, EditOrderedEventInput, EditOrderedEventOutput,
-    EventHistoryFilter, EventRow,
+    AppendOrderedEventInput, AppendOrderedEventOutput, DeleteOrderedEventInput,
+    DeleteOrderedEventOutput, EditOrderedEventInput, EditOrderedEventOutput, EventHistoryFilter,
+    EventRow,
 };
 
 fn reorder_analysis_seq(tx: &rusqlite::Transaction<'_>) -> Result<String, String> {
@@ -453,4 +454,62 @@ pub fn get_event_history(
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("failed to collect history rows: {e}"))
     }
+}
+
+#[tauri::command]
+pub fn delete_ordered_event(
+    state: State<'_, AppState>,
+    input: DeleteOrderedEventInput,
+) -> Result<DeleteOrderedEventOutput, String> {
+    let mut conn = open_connection(&state)?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("failed to begin transaction: {e}"))?;
+
+    // fetch the event to know its echo_id
+    let echo_id: String = tx
+        .query_row(
+            "SELECT echo_id FROM ordered_events WHERE event_id = ?1",
+            [&input.event_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("failed to query event: {e}"))?
+        .ok_or_else(|| format!("event not found: {}", input.event_id))?;
+
+    // remove the current_substats row sourced from this event
+    tx.execute(
+        "DELETE FROM echo_current_substats WHERE echo_id = ?1 AND source = 'ordered_event' AND event_id = ?2",
+        params![echo_id, input.event_id],
+    )
+    .map_err(|e| format!("failed to remove current_substats row: {e}"))?;
+
+    // remove the event itself
+    tx.execute(
+        "DELETE FROM ordered_events WHERE event_id = ?1",
+        [&input.event_id],
+    )
+    .map_err(|e| format!("failed to delete ordered event: {e}"))?;
+
+    // recompute opened_slots_count
+    let opened_slots_count: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(slot_no), 0) FROM echo_current_substats WHERE echo_id = ?1",
+            [&echo_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("failed to recompute opened slots: {e}"))?;
+    tx.execute(
+        "UPDATE echoes SET opened_slots_count = ?2, updated_at = ?3 WHERE echo_id = ?1",
+        params![echo_id, opened_slots_count, now_rfc3339()],
+    )
+    .map_err(|e| format!("failed to update echo after delete: {e}"))?;
+
+    // reorder analysis_seq to keep it contiguous
+    reorder_analysis_seq(&tx)?;
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit delete event: {e}"))?;
+
+    Ok(DeleteOrderedEventOutput { ok: true })
 }

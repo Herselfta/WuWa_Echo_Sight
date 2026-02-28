@@ -179,6 +179,18 @@ pub struct EditOrderedEventOutput {
     pub affected_range: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteOrderedEventInput {
+    pub event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteOrderedEventOutput {
+    pub ok: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct EventHistoryFilter {

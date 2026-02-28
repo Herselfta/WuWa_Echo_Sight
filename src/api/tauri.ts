@@ -97,6 +97,12 @@ export async function editOrderedEvent(input: {
   return invoke("edit_ordered_event", { input });
 }
 
+export async function deleteOrderedEvent(input: {
+  eventId: string;
+}): Promise<{ ok: boolean }> {
+  return invoke("delete_ordered_event", { input });
+}
+
 export async function getEventHistory(filter?: {
   echoId?: string;
   limit?: number;

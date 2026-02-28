@@ -1340,6 +1340,18 @@ button:hover {
   cursor: not-allowed;
 }
 
+.btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+  font-weight: 500;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
 /* chain remove button */
 .chain-remove-btn {
   min-width: 20px;

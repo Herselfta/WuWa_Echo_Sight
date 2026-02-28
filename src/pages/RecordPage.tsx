@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendOrderedEvent,
   createEcho,
+  deleteOrderedEvent,
   getEchoesForStat,
   getEventHistory,
   getGlobalDistribution,
@@ -254,6 +255,7 @@ export function RecordPage() {
 
   /* === misc === */
   const [saving, setSaving] = useState(false);
+  const [undoConfirmId, setUndoConfirmId] = useState<string | null>(null);
   const [loadingDist, setLoadingDist] = useState(false);
   const [loadingProb, setLoadingProb] = useState(false);
   const [message, setMessage] = useState("");
@@ -679,6 +681,26 @@ export function RecordPage() {
       await Promise.all([refreshEchoes(), loadHistory(), loadDistribution()]);
       await loadEchoProbRows();
       showMsg(`录入成功  ·  eventId: ${result.eventId.slice(0, 8)}`, "success");
+    } catch (error) {
+      showMsg(String(error), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUndoEvent = async (eventId: string) => {
+    if (undoConfirmId !== eventId) {
+      setUndoConfirmId(eventId);
+      return;
+    }
+    setSaving(true);
+    setUndoConfirmId(null);
+    showMsg("");
+    try {
+      await deleteOrderedEvent({ eventId });
+      await Promise.all([refreshEchoes(), loadHistory(), loadDistribution()]);
+      await loadEchoProbRows();
+      showMsg("已撤销最近一次录入。", "success");
     } catch (error) {
       showMsg(String(error), "error");
     } finally {
@@ -1202,6 +1224,15 @@ export function RecordPage() {
                 disabled={saving || !selectedEchoId || availableSlots.length === 0 || availableStatDefs.length === 0}
               >
                 录入
+              </button>
+              <button
+                type="button"
+                className={undoConfirmId && eventHistory.length > 0 ? "btn-danger" : ""}
+                disabled={saving || eventHistory.length === 0}
+                onClick={() => eventHistory.length > 0 && handleUndoEvent(eventHistory[0].eventId)}
+                title="撤销最近一次录入"
+              >
+                {undoConfirmId && eventHistory.length > 0 && undoConfirmId === eventHistory[0].eventId ? "确认撤销" : "撤销"}
               </button>
             </div>
           </form>
