@@ -126,19 +126,34 @@ function statKeyToAbbr(statKey: string): string {
 /* ── component ───────────────────────────────────── */
 
 export function RecordPage() {
-  const { echoes, statDefs, expectationPresets, selectedEchoId, setSelectedEchoId, refreshEchoes, refreshExpectationPresets } = useAppStore();
+  const { echoes, statDefs, expectationPresets, selectedEchoId, setSelectedEchoId, createFormDraft, patchCreateForm, refreshEchoes, refreshExpectationPresets } = useAppStore();
   const statMap = useMemo(() => new Map(statDefs.map((x) => [x.statKey, x])), [statDefs]);
 
-  /* === create echo form === */
-  const [createExpanded, setCreateExpanded] = useState(true);
-  const [createNickname, setCreateNickname] = useState("");
-  const [createMainStat, setCreateMainStat] = useState("atk_pct");
-  const [createCost, setCreateCost] = useState<number>(1);
-  const [createStatus, setCreateStatus] = useState<EchoStatus>("tracking");
+  /* === create echo form — persisted in store === */
+  // read aliases
+  const createExpanded = createFormDraft.expanded;
+  const createNickname = createFormDraft.nickname;
+  const createMainStat = createFormDraft.mainStat;
+  const createCost = createFormDraft.cost;
+  const createStatus = createFormDraft.status;
+  const createExpStats = createFormDraft.expStats;
+  const createExpOps = createFormDraft.expOps as RelOp[];
+  const createSlots = createFormDraft.slots as SlotDraft[];
+  // write wrappers (same API as useState setters so callers need no change)
+  const setCreateExpanded = (v: boolean | ((p: boolean) => boolean)) =>
+    patchCreateForm({ expanded: typeof v === "function" ? v(createFormDraft.expanded) : v });
+  const setCreateNickname = (v: string) => patchCreateForm({ nickname: v });
+  const setCreateMainStat = (v: string) => patchCreateForm({ mainStat: v });
+  const setCreateCost = (v: number) => patchCreateForm({ cost: v });
+  const setCreateStatus = (v: EchoStatus) => patchCreateForm({ status: v });
+  const setCreateExpStats: React.Dispatch<React.SetStateAction<string[]>> = (action) =>
+    patchCreateForm({ expStats: typeof action === "function" ? action(createFormDraft.expStats) : action });
+  const setCreateExpOps: React.Dispatch<React.SetStateAction<RelOp[]>> = (action) =>
+    patchCreateForm({ expOps: typeof action === "function" ? action(createFormDraft.expOps as RelOp[]) : action });
+  const setCreateSlots: React.Dispatch<React.SetStateAction<SlotDraft[]>> = (action) =>
+    patchCreateForm({ slots: typeof action === "function" ? action(createFormDraft.slots as SlotDraft[]) : action });
 
-  // expectation chain for create form
-  const [createExpStats, setCreateExpStats] = useState<string[]>([]);
-  const [createExpOps, setCreateExpOps] = useState<RelOp[]>([]);
+  // local-only UI state (no need to persist)
   const [createActiveExpIdx, setCreateActiveExpIdx] = useState<number | null>(null);
   const [createPresetId, setCreatePresetId] = useState<string | null>(null);
   const [createPresetSelectorOpen, setCreatePresetSelectorOpen] = useState(false);
@@ -148,8 +163,6 @@ export function RecordPage() {
   const createPresetMenuRef = useRef<HTMLDivElement | null>(null);
   const createPresetNamingInputRef = useRef<HTMLInputElement | null>(null);
 
-  // initial slots for create form
-  const [createSlots, setCreateSlots] = useState<SlotDraft[]>([]);
   const [createActiveSlotIdx, setCreateActiveSlotIdx] = useState<number | null>(null);
 
   /* === record event === */

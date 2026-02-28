@@ -9,11 +9,23 @@ import {
 import type {
   DistributionFilter,
   DistributionPayload,
+  EchoStatus,
   EchoProbRow,
   EchoSummary,
   ExpectationPreset,
   StatDef,
 } from "../types/domain";
+
+interface CreateFormDraft {
+  expanded: boolean;
+  nickname: string;
+  mainStat: string;
+  cost: number;
+  status: EchoStatus;
+  expStats: string[];
+  expOps: string[];
+  slots: { statKey: string; tierIndex: number }[];
+}
 
 interface AppState {
   statDefs: StatDef[];
@@ -26,6 +38,8 @@ interface AppState {
   distributionFilter: DistributionFilter;
   loading: boolean;
   error: string | null;
+  createFormDraft: CreateFormDraft;
+  patchCreateForm: (patch: Partial<CreateFormDraft>) => void;
   setDistributionFilter: (patch: Partial<DistributionFilter>) => void;
   setSelectedStatKey: (key: string | null) => void;
   setSelectedEchoId: (id: string) => void;
@@ -43,6 +57,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   distribution: null,
   selectedStatKey: null,
   selectedEchoId: "",
+  createFormDraft: {
+    expanded: true,
+    nickname: "",
+    mainStat: "atk_pct",
+    cost: 1,
+    status: "tracking",
+    expStats: [],
+    expOps: [],
+    slots: [],
+  },
   echoProbRows: [],
   distributionFilter: {},
   loading: false,
@@ -57,6 +81,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setSelectedStatKey: (key) => set({ selectedStatKey: key }),
   setSelectedEchoId: (id) => set({ selectedEchoId: id }),
+  patchCreateForm: (patch) => set((state) => ({ createFormDraft: { ...state.createFormDraft, ...patch } })),
   loadBootData: async () => {
     set({ loading: true, error: null });
     try {
