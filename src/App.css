@@ -188,8 +188,10 @@ label {
 
 input,
 select,
-button {
+button,
+textarea {
   font: inherit;
+  margin: 0;
 }
 
 input,
@@ -466,6 +468,7 @@ button:hover {
 .chain-item {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   min-height: 28px;
   border: 1px solid var(--line);
