@@ -874,6 +874,7 @@ button:hover {
 
 .echo-substat-chip.active {
   border-color: var(--accent);
+  border-style: solid;
   background: #eff6ff;
   color: var(--accent-ink);
 }

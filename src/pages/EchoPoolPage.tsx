@@ -70,7 +70,7 @@ interface EchoFilters {
   searchText: string;
   substatMode: SubstatFilterMode;
   substatStatKeys: string[];
-  substatTiers: Record<string, number>;
+  substatTiers: Record<string, number[]>;
   sortBy: EchoSortBy;
 }
 
@@ -171,11 +171,13 @@ function parseEchoFilters(raw: string | null): EchoFilters {
           ),
         )
       : [];
-    const substatTiers: Record<string, number> = {};
+    const substatTiers: Record<string, number[]> = {};
     if (typeof parsed.substatTiers === "object" && parsed.substatTiers !== null) {
       for (const [key, val] of Object.entries(parsed.substatTiers)) {
-        if (typeof val === "number") {
-          substatTiers[key] = val;
+        if (Array.isArray(val)) {
+          substatTiers[key] = val.filter((v): v is number => typeof v === "number");
+        } else if (typeof val === "number") {
+          substatTiers[key] = [val];
         }
       }
     }
@@ -359,6 +361,8 @@ export function EchoPoolPage() {
   const [pendingBatchDelete, setPendingBatchDelete] = useState(false);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startPosRef = useRef({ x: 0, y: 0 });
+  const [activeTierSelectStat, setActiveTierSelectStat] = useState<string | null>(null);
+  const [tierSelectorPos, setTierSelectorPos] = useState({ top: 0, left: 0 });
 
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string; kind: ToastKind } | null>(null);
@@ -418,8 +422,8 @@ export function EchoPoolPage() {
           const checkSubstat = (statKey: string) => {
             const slot = echo.currentSubstats.find((s) => s.statKey === statKey);
             if (!slot) return false;
-            const minTier = echoFilters.substatTiers[statKey];
-            if (minTier && slot.tierIndex < minTier) return false;
+            const tiers = echoFilters.substatTiers[statKey];
+            if (tiers && tiers.length > 0 && !tiers.includes(slot.tierIndex)) return false;
             return true;
           };
 
@@ -681,13 +685,32 @@ export function EchoPoolPage() {
       if (!(target instanceof Node)) {
         return;
       }
-      if (!(substatSelectorRef.current?.contains(target) ?? false)) {
+      const isElement = target instanceof Element;
+      if (!(substatSelectorRef.current?.contains(target) ?? false) && 
+          (!isElement || !target.closest(".echo-tier-selector-container"))) {
         setSubstatSelectorOpen(false);
       }
     };
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [substatSelectorOpen]);
+
+  useEffect(() => {
+    if (!activeTierSelectStat) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (!(target instanceof Element) || !target.closest(".echo-tier-selector-container")) {
+        setActiveTierSelectStat(null);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [activeTierSelectStat]);
 
   useEffect(() => {
     if (!presetSelectorOpen && !presetNamingOpen) {
@@ -2091,34 +2114,175 @@ export function EchoPoolPage() {
                             {stat.displayName}
                           </button>
                           {selected ? (
-                            <select
-                              value={echoFilters.substatTiers[stat.statKey] || 1}
-                              onChange={(e) =>
-                                setEchoFilters((prev) => ({
-                                  ...prev,
-                                  substatTiers: {
-                                    ...prev.substatTiers,
-                                    [stat.statKey]: Number(e.target.value),
-                                  },
-                                }))
-                              }
-                              title="最低档位要求"
-                              style={{
-                                width: "auto",
-                                padding: "0 2px",
-                                fontSize: "11px",
-                                height: "24px",
-                                background: "var(--bg-app)",
-                                border: "1px solid var(--border)",
-                                borderRadius: "4px",
-                              }}
-                            >
-                              <option value={1}>1+</option>
-                              <option value={2}>2+</option>
-                              <option value={3}>3+</option>
-                              <option value={4}>4+</option>
-                              <option value={5}>5+</option>
-                            </select>
+                            <div className="echo-tier-selector-container" style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                              <button
+                                type="button"
+                                className={`echo-substat-lv-btn ${echoFilters.substatTiers[stat.statKey]?.length || activeTierSelectStat === stat.statKey ? "active" : ""}`}
+                                style={{
+                                  padding: "0 6px",
+                                  minWidth: "24px",
+                                  height: "24px",
+                                  fontSize: "10px",
+                                  marginLeft: "4px",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  borderRadius: "12px",
+                                  border: (echoFilters.substatTiers[stat.statKey]?.length || activeTierSelectStat === stat.statKey)
+                                    ? "1px solid var(--accent)"
+                                    : "1px dashed #64748b",
+                                  background: (echoFilters.substatTiers[stat.statKey]?.length || activeTierSelectStat === stat.statKey)
+                                    ? "#eff6ff"
+                                    : "#f8fafc",
+                                  color: (echoFilters.substatTiers[stat.statKey]?.length || activeTierSelectStat === stat.statKey)
+                                    ? "var(--accent-ink)"
+                                    : "#64748b",
+                                  cursor: "pointer",
+                                  transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                                  boxSizing: "border-box",
+                                  flexShrink: 0,
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (activeTierSelectStat === stat.statKey) {
+                                    setActiveTierSelectStat(null);
+                                  } else {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    setTierSelectorPos({ top: rect.bottom + 6, left: rect.left });
+                                    setActiveTierSelectStat(stat.statKey);
+                                  }
+                                }}
+                              >
+                                {echoFilters.substatTiers[stat.statKey]?.length
+                                  ? echoFilters.substatTiers[stat.statKey].join(",")
+                                  : "Lv"}
+                              </button>
+
+                              {activeTierSelectStat === stat.statKey && (
+                                <div
+                                  className="echo-tier-selector"
+                                  onClick={(e) => e.stopPropagation()}
+                                  style={{
+                                    position: "fixed",
+                                    top: tierSelectorPos.top,
+                                    left: tierSelectorPos.left,
+                                    zIndex: 100000,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                    background: "var(--bg-card, #fff)",
+                                    padding: "4px 6px",
+                                    borderRadius: "20px",
+                                    border: "1px solid var(--border, #ccc)",
+                                    boxShadow: "0 4px 15px rgba(0,0,0,0.15)",
+                                  }}
+                                >
+                                  <div style={{ display: "inline-flex", gap: "2px" }}>
+                                    {(() => {
+                                      const maxTier = (stat.statKey === "atk_flat" || stat.statKey === "def_flat" || stat.statKey === "hp_flat") ? 4 : 8;
+                                      return Array.from({ length: maxTier }, (_, i) => i + 1).map((t) => {
+                                        const tiers = echoFilters.substatTiers[stat.statKey] || [];
+                                        const isTSelected = tiers.includes(t);
+                                        return (
+                                          <button
+                                            key={t}
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEchoFilters((prev) => {
+                                                const currentTiers = prev.substatTiers[stat.statKey] || [];
+                                                const nextTiers = currentTiers.includes(t)
+                                                  ? currentTiers.filter((v) => v !== t)
+                                                  : [...currentTiers, t].sort();
+                                                return {
+                                                  ...prev,
+                                                  substatTiers: {
+                                                    ...prev.substatTiers,
+                                                    [stat.statKey]: nextTiers,
+                                                  },
+                                                };
+                                              });
+                                            }}
+                                            style={{
+                                              width: "24px",
+                                              height: "24px",
+                                              fontSize: "12px",
+                                              padding: 0,
+                                              display: "flex",
+                                              alignItems: "center",
+                                              justifyContent: "center",
+                                              border: "none",
+                                              borderRadius: "50%",
+                                              cursor: "pointer",
+                                              backgroundColor: isTSelected ? "var(--btn-primary-bg, #3b82f6)" : "transparent",
+                                              color: isTSelected ? "#fff" : "var(--text-main, #334155)",
+                                              fontWeight: isTSelected ? "bold" : "normal",
+                                              transition: "background 0.2s",
+                                            }}
+                                          >
+                                            {t}
+                                          </button>
+                                        );
+                                      });
+                                    })()}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEchoFilters((prev) => {
+                                        const nextTiers = { ...prev.substatTiers };
+                                        delete nextTiers[stat.statKey];
+                                        return { ...prev, substatTiers: nextTiers };
+                                      });
+                                    }}
+                                    title="重置档位"
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      width: "20px",
+                                      height: "20px",
+                                      borderRadius: "50%",
+                                      background: "var(--bg-app, #f1f5f9)",
+                                      border: "none",
+                                      cursor: "pointer",
+                                      padding: 0,
+                                      marginLeft: "2px",
+                                    }}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                                      <path d="M3 3v5h5"></path>
+                                    </svg>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActiveTierSelectStat(null);
+                                    }}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      width: "20px",
+                                      height: "20px",
+                                      borderRadius: "50%",
+                                      background: "#569d79",
+                                      border: "none",
+                                      cursor: "pointer",
+                                      padding: 0,
+                                      marginLeft: "2px",
+                                    }}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                      <polyline points="20 6 9 17 4 12"></polyline>
+                                    </svg>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           ) : null}
                         </div>
                       );
