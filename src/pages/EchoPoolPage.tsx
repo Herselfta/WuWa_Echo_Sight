@@ -2445,20 +2445,26 @@ export function EchoPoolPage() {
                               {editingOrderedSlots.length === 0 && slotsDraft.length === 0 ? (
                                 <span className="chain-empty">无</span>
                               ) : null}
-                              {editingOrderedSlots.map((slot) => (
-                                <div
-                                  key={`ordered-slot-${slot.slotNo}`}
-                                  className="chain-item locked"
-                                  title="顺序事件槽位（仅显示，不可编辑）"
-                                >
-                                  <span className="slot-label">S{slot.slotNo}</span>
-                                  <span>
-                                    {statMap.get(slot.statKey)?.displayName ?? slot.statKey} /{" "}
-                                    {formatTierLabel(slot.statKey, slot.tierIndex)}
-                                  </span>
-                                </div>
-                              ))}
-                              {slotsDraft.map((slot, idx) => {
+                              {[1, 2, 3, 4, 5].map((slotNo) => {
+                                const lockedSlot = editingOrderedSlots.find((s) => s.slotNo === slotNo);
+                                if (lockedSlot) {
+                                  return (
+                                    <div
+                                      key={`ordered-slot-${lockedSlot.slotNo}`}
+                                      className="chain-item locked"
+                                      title="顺序事件槽位（仅显示，不可编辑）"
+                                    >
+                                      <span>
+                                        {slotNo}: {statKeyToAbbr(lockedSlot.statKey)}{lockedSlot.tierIndex}={formatScaledValue(statMap.get(lockedSlot.statKey)?.unit ?? "flat", statMap.get(lockedSlot.statKey)?.tiers.find((t) => t.tierIndex === lockedSlot.tierIndex)?.valueScaled ?? 0)}
+                                      </span>
+                                    </div>
+                                  );
+                                }
+
+                                const idx = editingEditableSlots.indexOf(slotNo);
+                                if (idx === -1 || idx >= slotsDraft.length) return null;
+
+                                const slot = slotsDraft[idx];
                                 const stat = statMap.get(slot.statKey);
                                 const selected = activeSlotIndex === idx;
                                 const isDraggingThis = draggingSlotFromIndex === idx;
@@ -2473,7 +2479,7 @@ export function EchoPoolPage() {
                                     (!currentUsed.includes(x.statKey) && !editingOrderedStatSet.has(x.statKey)),
                                 );
                                 const tiers = statMap.get(slot.statKey)?.tiers ?? [];
-                                const previewSlotNo = editingEditableSlots[idx] ?? idx + 1;
+                                const previewSlotNo = slotNo;
 
                                 return (
                                   <Fragment key={`slot-${idx}-${slot.statKey}`}>
@@ -2517,51 +2523,53 @@ export function EchoPoolPage() {
                                       }}
                                       title="长按拖动，点击编辑，右键删除"
                                     >
-                                      <span className="slot-label">S{previewSlotNo}</span>
                                       {selected ? (
-                                        <div className="inline-row" onPointerDown={(e) => e.stopPropagation()}>
-                                          <select
-                                            value={slot.statKey}
-                                            onChange={(e) => {
-                                              const nextStatKey = e.target.value;
-                                              const nextTier =
-                                                statMap.get(nextStatKey)?.tiers[0]?.tierIndex ?? 1;
-                                              setSlotsDraft((prev) =>
-                                                prev.map((item, itemIdx) =>
-                                                  itemIdx === idx
-                                                    ? { statKey: nextStatKey, tierIndex: nextTier }
-                                                    : item,
-                                                ),
-                                              );
-                                            }}
-                                          >
-                                            {availableStats.map((s) => (
-                                              <option key={s.statKey} value={s.statKey}>
-                                                {s.displayName}
-                                              </option>
-                                            ))}
-                                          </select>
-                                          <select
-                                            value={slot.tierIndex}
-                                            onChange={(e) => {
-                                              const nextTier = Number(e.target.value);
-                                              setSlotsDraft((prev) =>
-                                                prev.map((item, itemIdx) =>
-                                                  itemIdx === idx ? { ...item, tierIndex: nextTier } : item,
-                                                ),
-                                              );
-                                            }}
-                                          >
-                                            {tiers.map((tier) => (
-                                              <option key={tier.tierIndex} value={tier.tierIndex}>
-                                                {formatTierLabel(slot.statKey, tier.tierIndex)}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </div>
+                                        <>
+                                          <span className="slot-label">S{previewSlotNo}</span>
+                                          <div className="inline-row" onPointerDown={(e) => e.stopPropagation()}>
+                                            <select
+                                              value={slot.statKey}
+                                              onChange={(e) => {
+                                                const nextStatKey = e.target.value;
+                                                const nextTier =
+                                                  statMap.get(nextStatKey)?.tiers[0]?.tierIndex ?? 1;
+                                                setSlotsDraft((prev) =>
+                                                  prev.map((item, itemIdx) =>
+                                                    itemIdx === idx
+                                                      ? { statKey: nextStatKey, tierIndex: nextTier }
+                                                      : item,
+                                                  ),
+                                                );
+                                              }}
+                                            >
+                                              {availableStats.map((s) => (
+                                                <option key={s.statKey} value={s.statKey}>
+                                                  {s.displayName}
+                                                </option>
+                                              ))}
+                                            </select>
+                                            <select
+                                              value={slot.tierIndex}
+                                              onChange={(e) => {
+                                                const nextTier = Number(e.target.value);
+                                                setSlotsDraft((prev) =>
+                                                  prev.map((item, itemIdx) =>
+                                                    itemIdx === idx ? { ...item, tierIndex: nextTier } : item,
+                                                  ),
+                                                );
+                                              }}
+                                            >
+                                              {tiers.map((tier) => (
+                                                <option key={tier.tierIndex} value={tier.tierIndex}>
+                                                  {formatTierLabel(slot.statKey, tier.tierIndex)}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </div>
+                                        </>
                                       ) : (
                                         <span>
-                                          {stat?.displayName ?? slot.statKey} / {formatTierLabel(slot.statKey, slot.tierIndex)}
+                                          {previewSlotNo}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(stat?.unit ?? "flat", stat?.tiers.find((t) => t.tierIndex === slot.tierIndex)?.valueScaled ?? 0)}
                                         </span>
                                       )}
                                     </div>
