@@ -1602,17 +1602,17 @@ export function EchoPoolPage() {
                         <div className="chain-row" ref={presetRowRef}>
                           {presetDraftStats.length === 0 ? <span className="chain-empty">无</span> : null}
                           {presetDraftStats.map((statKey, idx) => {
-                            if (draggingPresetFromIndex === idx) {
-                              return null;
-                            }
                             const stat = statMap.get(statKey);
                             const selected = activePresetIndex === idx;
+                            const isDraggingThis = draggingPresetFromIndex === idx;
+                            const classNames = ["chain-item"];
+                            if (selected) classNames.push("active");
+                            if (isDraggingThis) classNames.push("dragging");
                             const availableStats = statDefs.filter(
                               (x) => x.statKey === statKey || !presetDraftStats.includes(x.statKey),
                             );
                             const hideOperator =
-                              draggingPresetFromIndex !== null &&
-                              (idx === draggingPresetFromIndex || idx + 1 === draggingPresetFromIndex);
+                              draggingPresetFromIndex !== null && idx === draggingPresetFromIndex;
 
                             return (
                               <Fragment key={`preset-${idx}-${statKey}`}>
@@ -1621,37 +1621,42 @@ export function EchoPoolPage() {
                                 ) : null}
                                 <div className="chain-fragment">
                                   <div
-                                    className={selected ? "chain-item active" : "chain-item"}
+                                    className={classNames.join(" ")}
                                     data-drag-kind="preset"
                                     data-drag-index={idx}
-                                    onClick={() => setActivePresetIndex(idx)}
+                                    onPointerDown={(e) => {
+                                      beginLongPressDrag<DragKind, DragState>({
+                                        event: e,
+                                        kind: "preset",
+                                        fromIndex: idx,
+                                        label: stat?.displayName ?? statKey,
+                                        longPressTimerRef,
+                                        startPosRef,
+                                        setDragState,
+                                        longPressMs: CHAIN_LONG_PRESS_MS,
+                                        ignoreTagNames: ["SELECT"],
+                                      });
+                                    }}
+                                    onPointerMove={(e) => {
+                                      updateLongPressDragCandidate({
+                                        event: e,
+                                        longPressTimerRef,
+                                        startPosRef,
+                                      });
+                                    }}
+                                    onPointerCancel={() => cancelLongPressDragCandidate(longPressTimerRef)}
+                                    onPointerUp={() => {
+                                      completeLongPressTap({
+                                        longPressTimerRef,
+                                        onTap: () => setActivePresetIndex(idx),
+                                      });
+                                    }}
                                     onContextMenu={(e) => {
                                       e.preventDefault();
                                       removePresetStatAt(idx);
                                     }}
-                                    title="单击编辑，右键删除"
+                                    title="长按拖动，点击编辑，右键删除"
                                   >
-                                    <button
-                                      type="button"
-                                      className="drag-handle"
-                                      onPointerDown={(e) => {
-                                        e.stopPropagation();
-                                        e.preventDefault();
-                                        setDragState({
-                                          kind: "preset",
-                                          fromIndex: idx,
-                                          dropIndex: idx,
-                                          pointerId: e.pointerId,
-                                          x: e.clientX,
-                                          y: e.clientY,
-                                          label: stat?.displayName ?? statKey,
-                                        });
-                                      }}
-                                      onClick={(e) => e.stopPropagation()}
-                                      title="按住拖动排序"
-                                    >
-                                      ::
-                                    </button>
                                     {selected ? (
                                       <select
                                         value={statKey}
@@ -1661,6 +1666,7 @@ export function EchoPoolPage() {
                                             prev.map((item, itemIdx) => (itemIdx === idx ? next : item)),
                                           );
                                         }}
+                                        onPointerDown={(e) => e.stopPropagation()}
                                       >
                                         {availableStats.map((s) => (
                                           <option key={s.statKey} value={s.statKey}>
