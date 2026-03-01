@@ -172,6 +172,7 @@ pub fn get_echoes_for_stat_internal(
         "e.opened_slots_count < 5".to_string(),
         "NOT EXISTS (SELECT 1 FROM echo_current_substats cs WHERE cs.echo_id = e.echo_id AND cs.stat_key = ?1)"
             .to_string(),
+        "e.status NOT IN ('paused', 'abandoned', 'completed')".to_string(),
     ];
     let mut params_vec: Vec<rusqlite::types::Value> = vec![filter.stat_key.clone().into()];
 
