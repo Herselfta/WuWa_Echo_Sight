@@ -1521,9 +1521,23 @@ button:hover {
 
 .record-event-inline-row {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.record-event-inline-row > .record-preview-value {
+  flex: 0 0 auto;
+  margin-right: auto;
+}
+
+.record-event-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+  flex: 0 1 auto;
 }
 
 .record-field-compact {
@@ -1538,12 +1552,16 @@ button:hover {
   max-width: 180px;
 }
 
-.record-event-actions {
-  display: flex;
-  gap: 6px;
-  align-items: flex-end;
-  margin-left: auto;
-  flex: 0 0 auto;
+.record-echo-name-select {
+  font-weight: 600;
+  font-size: 13px;
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  cursor: pointer;
+  min-width: 100px;
+  max-width: 200px;
+  color: inherit;
 }
 
 .record-preview-value {

@@ -387,6 +387,25 @@ export function RecordPage() {
     return () => document.body.classList.remove("is-dragging-chain");
   }, [dragState]);
 
+  // click-outside-to-dismiss for ephemeral toggle states
+  useEffect(() => {
+    const handler = (e: PointerEvent) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      // chain items: deselect active expectation / slot index
+      if (!target.closest(".chain-item") && !target.closest(".chain-op")) {
+        setCreateActiveExpIdx(null);
+        setCreateActiveSlotIdx(null);
+      }
+      // undo confirm: dismiss unless clicking the undo button itself
+      if (!target.closest(".record-undo-btn")) {
+        setUndoConfirmId(null);
+      }
+    };
+    window.addEventListener("pointerdown", handler);
+    return () => window.removeEventListener("pointerdown", handler);
+  }, []);
+
   // drag move / up / blur
   useEffect(() => {
     if (!dragState) return;
@@ -473,27 +492,41 @@ export function RecordPage() {
     } finally { setLoadingDist(false); }
   };
 
-  const loadEchoProbRows = async () => {
-    if (!selectedDistStatKey) { setEchoProbRows([]); return; }
+  const loadEchoProbRows = async (statKey?: string) => {
+    const key = statKey ?? selectedDistStatKey;
+    if (!key) { setEchoProbRows([]); return; }
     setLoadingProb(true);
     try {
-      const rows = await getEchoesForStat({ statKey: selectedDistStatKey, sortBy, ...distributionFilter });
+      const rows = await getEchoesForStat({ statKey: key, sortBy, ...distributionFilter });
       setEchoProbRows(rows);
     } finally { setLoadingProb(false); }
   };
 
   useEffect(() => { void loadHistory(); void loadDistribution(); }, []);
 
-  useEffect(() => { void loadDistribution(); }, [
+  useEffect(() => { void loadDistribution(); setSelectedDistStatKey(null); setEchoProbRows([]); }, [
     distributionFilter.startTime, distributionFilter.endTime,
     distributionFilter.mainStatKey, distributionFilter.costClass, distributionFilter.status,
   ]);
 
-  useEffect(() => { void loadEchoProbRows(); }, [
-    selectedDistStatKey, sortBy,
-    distributionFilter.startTime, distributionFilter.endTime,
-    distributionFilter.mainStatKey, distributionFilter.costClass, distributionFilter.status,
-  ]);
+  // hit list is loaded manually on click, not automatically
+  const handleDistRowClick = (statKey: string) => {
+    setSelectedDistStatKey(statKey);
+    void loadEchoProbRows(statKey);
+  };
+
+  const handleSortByChange = (newSortBy: string) => {
+    setSortBy(newSortBy);
+    if (selectedDistStatKey) {
+      void (async () => {
+        setLoadingProb(true);
+        try {
+          const rows = await getEchoesForStat({ statKey: selectedDistStatKey, sortBy: newSortBy, ...distributionFilter });
+          setEchoProbRows(rows);
+        } finally { setLoadingProb(false); }
+      })();
+    }
+  };
 
   /* ── chain helpers for create form ─── */
 
@@ -1125,38 +1158,46 @@ export function RecordPage() {
           <form className="card record-card record-event-form" onSubmit={handleRecordEvent}>
             <span className="record-section-title">强化录入</span>
 
-            {/* 录入字段 + 按钮 — 同一行紧凑布局 */}
+            {/* 录入行：左侧预览 + 右侧选择和按钮 */}
             <div className="record-event-inline-row">
-              <label className="record-field record-field-compact">
-                <span className="record-field-label">时间</span>
-                <input
-                  type="datetime-local"
-                  value={eventTimeLocal}
-                  onChange={(e) => setEventTimeLocal(e.target.value)}
-                />
-              </label>
+              <span className="record-preview-value">
+                {selectedStat ? (
+                  <>
+                    S{nextSlotNo} {selectedStat.displayName} 档{tierIndex} = {formatScaledValue(selectedStat.unit, selectedTierValue)}
+                  </>
+                ) : "—"}
+              </span>
 
-              <label className="record-field record-field-compact">
-                <span className="record-field-label">词条</span>
-                <select value={selectedStat?.statKey ?? ""} onChange={(e) => setStatKey(e.target.value)}>
-                  {availableStatDefs.map((s) => (
-                    <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
-                  ))}
-                </select>
-              </label>
+              <div className="record-event-controls">
+                <label className="record-field record-field-compact">
+                  <span className="record-field-label">时间</span>
+                  <input
+                    type="datetime-local"
+                    value={eventTimeLocal}
+                    onChange={(e) => setEventTimeLocal(e.target.value)}
+                  />
+                </label>
 
-              <label className="record-field record-field-compact">
-                <span className="record-field-label">档位</span>
-                <select value={tierIndex} onChange={(e) => setTierIndex(Number(e.target.value))}>
-                  {(selectedStat?.tiers ?? []).map((t) => (
-                    <option key={t.tierIndex} value={t.tierIndex}>
-                      档{t.tierIndex} ({formatScaledValue(selectedStat?.unit ?? "flat", t.valueScaled)})
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <label className="record-field record-field-compact">
+                  <span className="record-field-label">词条</span>
+                  <select value={selectedStat?.statKey ?? ""} onChange={(e) => setStatKey(e.target.value)}>
+                    {availableStatDefs.map((s) => (
+                      <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
+                    ))}
+                  </select>
+                </label>
 
-              <div className="record-event-actions">
+                <label className="record-field record-field-compact">
+                  <span className="record-field-label">档位</span>
+                  <select value={tierIndex} onChange={(e) => setTierIndex(Number(e.target.value))}>
+                    {(selectedStat?.tiers ?? []).map((t) => (
+                      <option key={t.tierIndex} value={t.tierIndex}>
+                        档{t.tierIndex} ({formatScaledValue(selectedStat?.unit ?? "flat", t.valueScaled)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
                 <button
                   type="submit" className="btn-primary"
                   disabled={saving || !selectedEchoId || availableSlots.length === 0 || availableStatDefs.length === 0}
@@ -1165,7 +1206,7 @@ export function RecordPage() {
                 </button>
                 <button
                   type="button"
-                  className={undoConfirmId && eventHistory.length > 0 ? "btn-danger" : ""}
+                  className={`record-undo-btn ${undoConfirmId && eventHistory.length > 0 ? "btn-danger" : ""}`}
                   disabled={saving || eventHistory.length === 0}
                   onClick={() => eventHistory.length > 0 && handleUndoEvent(eventHistory[0].eventId)}
                   title="撤销最近一次录入"
@@ -1175,111 +1216,102 @@ export function RecordPage() {
               </div>
             </div>
 
-            {/* 预览 */}
-            <span className="record-preview-value">
-              {selectedStat ? (
-                <>
-                  S{nextSlotNo} {selectedStat.displayName} 档{tierIndex} = {formatScaledValue(selectedStat.unit, selectedTierValue)}
-                </>
-              ) : "—"}
-            </span>
-
-            {/* 声骸选择 — 移至下方 */}
-            <label className="record-field">
-              <span className="record-field-label">目标声骸</span>
-              <select value={selectedEchoId} onChange={(e) => setSelectedEchoId(e.target.value)}>
-                <option value="">请选择</option>
-                {echoes
-                  .filter((e) => e.status === "tracking" || e.status === "paused")
-                  .map((echo) => (
-                    <option key={echo.echoId} value={echo.echoId}>
-                      {(echo.nickname ?? echo.echoId.slice(0, 8)) + ` · ${echo.openedSlotsCount}/5`}
-                    </option>
-                  ))}
-                {echoes.filter((e) => e.status !== "tracking" && e.status !== "paused").length > 0 ? (
-                  <optgroup label="── 其他状态 ──">
-                    {echoes
-                      .filter((e) => e.status !== "tracking" && e.status !== "paused")
-                      .map((echo) => (
-                        <option key={echo.echoId} value={echo.echoId}>
-                          {(echo.nickname ?? echo.echoId.slice(0, 8)) + ` · ${echo.openedSlotsCount}/5 [${STATUS_LABELS[echo.status]}]`}
-                        </option>
-                      ))}
-                  </optgroup>
-                ) : null}
-              </select>
-            </label>
-
-            {/* 当前声骸详情 (内联) */}
-            {selectedEcho ? (
-              <div
-                className="record-echo-info"
-                style={{
-                  padding: "8px 10px",
-                  background: "var(--bg-app, #f8fafc)",
-                  borderRadius: "6px",
-                  marginTop: "4px",
-                  marginBottom: "4px",
-                }}
-              >
-                <div className="record-echo-info-header" style={{ marginBottom: "4px" }}>
-                  <span className="record-echo-name">
-                    {selectedEcho.nickname ?? selectedEcho.echoId.slice(0, 8)}
-                  </span>
-                  <span className={`record-badge ${STATUS_BADGE_CLASS[selectedEcho.status]}`}>
-                    {STATUS_LABELS[selectedEcho.status]}
-                  </span>
-                  <span className="record-badge badge-neutral">
-                    Cost {selectedEcho.costClass}
-                  </span>
-                  <span className="record-badge badge-neutral">
-                    {statMap.get(selectedEcho.mainStatKey)?.displayName ?? selectedEcho.mainStatKey}
-                  </span>
-                </div>
-                <div className="record-echo-slots" style={{ marginBottom: selectedEcho.expectations.length > 0 ? "4px" : "0" }}>
-                  <span className="record-echo-slots-label">
-                    词条 {selectedEcho.openedSlotsCount}/5
-                  </span>
-                  {selectedEcho.currentSubstats.length === 0 ? (
-                    <span className="chain-empty">暂无词条</span>
-                  ) : (
-                    [...selectedEcho.currentSubstats]
-                      .sort((a, b) => a.slotNo - b.slotNo)
-                      .map((slot) => {
-                        const st = statMap.get(slot.statKey);
-                        return (
-                          <span
-                            key={slot.slotNo}
-                            className={`slot-pill ${slot.source === "ordered_event" ? "slot-pill-locked" : ""}`}
-                            title={`${st?.displayName ?? slot.statKey} 档${slot.tierIndex}：${formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}`}
-                          >
-                            {slot.slotNo}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}
-                          </span>
-                        );
-                      })
-                  )}
-                </div>
-                {selectedEcho.expectations.length > 0 ? (
-                  <div className="record-echo-exp">
-                    <span className="chain-label">期望：</span>
-                    {[...selectedEcho.expectations]
-                      .sort((a, b) => a.rank - b.rank || a.statKey.localeCompare(b.statKey))
-                      .map((exp, idx, arr) => (
-                        <Fragment key={idx}>
-                          {idx > 0 ? (
-                            <span className="record-exp-op">
-                              {arr[idx].rank === arr[idx - 1].rank ? "=" : ">"}
-                            </span>
-                          ) : null}
-                          <span className="record-exp-tag">
-                            {statMap.get(exp.statKey)?.displayName ?? exp.statKey}
-                          </span>
-                        </Fragment>
-                      ))}
-                  </div>
+            {/* 声骸信息 — 选择器嵌入名称位置 */}
+            <div
+              className="record-echo-info"
+              style={{
+                padding: "8px 10px",
+                background: "var(--bg-app, #f8fafc)",
+                borderRadius: "6px",
+              }}
+            >
+              <div className="record-echo-info-header" style={{ marginBottom: selectedEcho ? "4px" : "0" }}>
+                <select
+                  className="record-echo-name-select"
+                  value={selectedEchoId}
+                  onChange={(e) => setSelectedEchoId(e.target.value)}
+                >
+                  <option value="">请选择声骸</option>
+                  {echoes
+                    .filter((e) => e.status === "tracking" || e.status === "paused")
+                    .map((echo) => (
+                      <option key={echo.echoId} value={echo.echoId}>
+                        {(echo.nickname ?? echo.echoId.slice(0, 8)) + ` · ${echo.openedSlotsCount}/5`}
+                      </option>
+                    ))}
+                  {echoes.filter((e) => e.status !== "tracking" && e.status !== "paused").length > 0 ? (
+                    <optgroup label="── 其他状态 ──">
+                      {echoes
+                        .filter((e) => e.status !== "tracking" && e.status !== "paused")
+                        .map((echo) => (
+                          <option key={echo.echoId} value={echo.echoId}>
+                            {(echo.nickname ?? echo.echoId.slice(0, 8)) + ` · ${echo.openedSlotsCount}/5 [${STATUS_LABELS[echo.status]}]`}
+                          </option>
+                        ))}
+                    </optgroup>
+                  ) : null}
+                </select>
+                {selectedEcho ? (
+                  <>
+                    <span className={`record-badge ${STATUS_BADGE_CLASS[selectedEcho.status]}`}>
+                      {STATUS_LABELS[selectedEcho.status]}
+                    </span>
+                    <span className="record-badge badge-neutral">
+                      Cost {selectedEcho.costClass}
+                    </span>
+                    <span className="record-badge badge-neutral">
+                      {statMap.get(selectedEcho.mainStatKey)?.displayName ?? selectedEcho.mainStatKey}
+                    </span>
+                  </>
                 ) : null}
               </div>
-            ) : null}
+              {selectedEcho ? (
+                <>
+                  <div className="record-echo-slots" style={{ marginBottom: selectedEcho.expectations.length > 0 ? "4px" : "0" }}>
+                    <span className="record-echo-slots-label">
+                      词条 {selectedEcho.openedSlotsCount}/5
+                    </span>
+                    {selectedEcho.currentSubstats.length === 0 ? (
+                      <span className="chain-empty">暂无词条</span>
+                    ) : (
+                      [...selectedEcho.currentSubstats]
+                        .sort((a, b) => a.slotNo - b.slotNo)
+                        .map((slot) => {
+                          const st = statMap.get(slot.statKey);
+                          return (
+                            <span
+                              key={slot.slotNo}
+                              className={`slot-pill ${slot.source === "ordered_event" ? "slot-pill-locked" : ""}`}
+                              title={`${st?.displayName ?? slot.statKey} 档${slot.tierIndex}：${formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}`}
+                            >
+                              {slot.slotNo}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}
+                            </span>
+                          );
+                        })
+                    )}
+                  </div>
+                  {selectedEcho.expectations.length > 0 ? (
+                    <div className="record-echo-exp">
+                      <span className="chain-label">期望：</span>
+                      {[...selectedEcho.expectations]
+                        .sort((a, b) => a.rank - b.rank || a.statKey.localeCompare(b.statKey))
+                        .map((exp, idx, arr) => (
+                          <Fragment key={idx}>
+                            {idx > 0 ? (
+                              <span className="record-exp-op">
+                                {arr[idx].rank === arr[idx - 1].rank ? "=" : ">"}
+                              </span>
+                            ) : null}
+                            <span className="record-exp-tag">
+                              {statMap.get(exp.statKey)?.displayName ?? exp.statKey}
+                            </span>
+                          </Fragment>
+                        ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
           </form>
         </div>
 
@@ -1431,7 +1463,7 @@ export function RecordPage() {
                     <tr
                       key={row.statKey}
                       className={row.statKey === selectedDistStatKey ? "active-row" : ""}
-                      onClick={() => setSelectedDistStatKey(row.statKey)}
+                      onClick={() => handleDistRowClick(row.statKey)}
                       style={{ cursor: "pointer" }}
                     >
                       <td>{row.displayName}</td>
@@ -1458,7 +1490,7 @@ export function RecordPage() {
               </span>
               <label className="record-sort-label">
                 排序
-                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                <select value={sortBy} onChange={(e) => handleSortByChange(e.target.value)}>
                   <option value="pFinal">P(final)</option>
                   <option value="pNext">P(next)</option>
                   <option value="rank">期望权重</option>

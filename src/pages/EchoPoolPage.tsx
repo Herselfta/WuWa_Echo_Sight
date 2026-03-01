@@ -218,13 +218,16 @@ function findPresetByChain(
   ops: RelOp[],
   excludePresetId?: string,
 ): ExpectationPreset | null {
+  // canonicalize input chain for comparison
+  const inputItems = chainToExpectationItems(stats, ops);
+  const inputCanonical = buildExpectationChain(inputItems);
   return (
     presets.find((preset) => {
       if (excludePresetId && preset.presetId === excludePresetId) {
         return false;
       }
       const chain = buildExpectationChain(preset.items);
-      return areChainsEqual(stats, ops, chain.stats, chain.ops);
+      return areChainsEqual(inputCanonical.stats, inputCanonical.ops, chain.stats, chain.ops);
     }) ?? null
   );
 }
@@ -439,11 +442,15 @@ export function EchoPoolPage() {
         if (echoFilters.openedSlots !== "all" && String(echo.openedSlotsCount) !== echoFilters.openedSlots) {
           return false;
         }
-        if (echoFilters.presetId !== "all" && filterPresetChain) {
-          const echoChain = buildExpectationChain(echo.expectations);
+        if (echoFilters.presetId !== "all") {
           if (echoFilters.presetId === "__none__") {
-            if (echo.expectations.length > 0) return false;
-          } else {
+            // "无预设" = echoes with no expectations, or expectations that don't match any preset
+            const matchedPreset = echo.expectations.length > 0
+              ? findPresetByChain(expectationPresets, buildExpectationChain(echo.expectations).stats, buildExpectationChain(echo.expectations).ops)
+              : null;
+            if (echo.expectations.length > 0 && matchedPreset) return false;
+          } else if (filterPresetChain) {
+            const echoChain = buildExpectationChain(echo.expectations);
             if (!areChainsEqual(echoChain.stats, echoChain.ops, filterPresetChain.stats, filterPresetChain.ops)) {
               return false;
             }
@@ -672,6 +679,29 @@ export function EchoPoolPage() {
     document.body.classList.toggle("is-dragging-chain", dragState !== null);
     return () => document.body.classList.remove("is-dragging-chain");
   }, [dragState]);
+
+  // click-outside-to-dismiss for ephemeral toggle states
+  useEffect(() => {
+    const handler = (e: PointerEvent) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      // chain items: deselect active expectation / slot index
+      if (!target.closest(".chain-item") && !target.closest(".chain-op")) {
+        setActiveExpectationIndex(null);
+        setActiveSlotIndex(null);
+      }
+      // pending-delete echo: dismiss unless clicking the same delete button
+      if (!target.closest(".echo-action-btn")) {
+        setPendingDeleteEchoId(null);
+      }
+      // pending-delete preset: dismiss unless clicking the preset action button
+      if (!target.closest(".preset-action-btn")) {
+        setPendingDeletePresetId(null);
+      }
+    };
+    window.addEventListener("pointerdown", handler);
+    return () => window.removeEventListener("pointerdown", handler);
+  }, []);
 
   useEffect(() => {
     if (!presetSelectorOpen && !presetNamingOpen) {
