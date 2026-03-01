@@ -5,8 +5,8 @@ use tauri::State;
 
 use crate::db::{open_connection, AppState};
 use crate::domain::types::{
-    CategoryStreakReport, CategoryStreakRow, HypothesisFilter, SlotStatCell,
-    SlotStatDistribution, TransitionCell, TransitionMatrix,
+    CategoryStreakReport, CategoryStreakRow, HypothesisFilter, ReversionBucket, ReversionReport,
+    SlotStatCell, SlotStatDistribution, StatReversionSeries, TransitionCell, TransitionMatrix,
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -589,6 +589,235 @@ fn erfc_approx(x: f64) -> f64 {
             + t * (-0.284496736
                 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
     poly * (-x * x).exp()
+}
+
+/* ═══════════════════════════════════════════════════════
+   4. Mean-reversion analysis
+      ─ Flatten all events into global analysis_seq order
+      ─ Per stat: running cumulative frequency deviation,
+        inter-arrival gap statistics, autocorrelation,
+        and window-conditional frequency
+   ═══════════════════════════════════════════════════════ */
+
+/// Load all events in global analysis_seq order (regardless of echo grouping).
+/// Returns (analysis_seq, stat_key) pairs.
+fn load_flat_timeline(
+    conn: &Connection,
+    filter: &HypothesisFilter,
+) -> Result<Vec<(i64, String)>, String> {
+    let mut conditions = Vec::<String>::new();
+    let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+
+    if let Some(cost_class) = filter.cost_class {
+        conditions.push("e.cost_class = ?".to_string());
+        params_vec.push(cost_class.into());
+    }
+    if let Some(main_stat_key) = &filter.main_stat_key {
+        conditions.push("e.main_stat_key = ?".to_string());
+        params_vec.push(main_stat_key.clone().into());
+    }
+    if let Some(status) = &filter.status {
+        conditions.push("e.status = ?".to_string());
+        params_vec.push(status.clone().into());
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let query = format!(
+        "SELECT oe.analysis_seq, oe.stat_key
+         FROM ordered_events oe
+         JOIN echoes e ON e.echo_id = oe.echo_id
+         {}
+         ORDER BY oe.analysis_seq ASC",
+        where_clause
+    );
+
+    let mut stmt = conn
+        .prepare(&query)
+        .map_err(|e| format!("prepare flat timeline: {e}"))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params_vec), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| format!("query flat timeline: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("collect flat timeline: {e}"))?;
+    Ok(rows)
+}
+
+/// Sample Pearson autocorrelation of a binary Vec<f64> (0.0 / 1.0) at given lag.
+fn binary_autocorr(series: &[f64], lag: usize) -> f64 {
+    let n = series.len();
+    if n <= lag + 1 {
+        return f64::NAN;
+    }
+    let mean: f64 = series.iter().sum::<f64>() / n as f64;
+    let var: f64 = series.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+    if var < 1e-12 {
+        return f64::NAN;
+    }
+    let cov: f64 = (0..(n - lag))
+        .map(|i| (series[i] - mean) * (series[i + lag] - mean))
+        .sum::<f64>()
+        / n as f64;
+    cov / var
+}
+
+#[tauri::command]
+pub fn get_reversion_analysis(
+    state: State<'_, AppState>,
+    filter: Option<HypothesisFilter>,
+    window_size: Option<i64>,
+) -> Result<ReversionReport, String> {
+    let conn = open_connection(&state)?;
+    let filter = filter.unwrap_or_default();
+    let w = window_size.unwrap_or(10).max(2).min(40) as usize;
+
+    let stat_keys = list_stat_keys(&conn)?;
+    let timeline = load_flat_timeline(&conn, &filter)?;
+
+    let n = timeline.len();
+    if n == 0 {
+        return Ok(ReversionReport {
+            total_events: 0,
+            global_seqs: vec![],
+            stat_series: vec![],
+        });
+    }
+
+    let global_seqs: Vec<i64> = timeline.iter().map(|(s, _)| *s).collect();
+    // dense index: position 0..n maps to analysis_seq
+    let flat_stats: Vec<&str> = timeline.iter().map(|(_, k)| k.as_str()).collect();
+
+    // Base frequency from full data
+    let mut base_counts: HashMap<String, usize> = HashMap::new();
+    for (_, sk) in &timeline {
+        *base_counts.entry(sk.clone()).or_default() += 1;
+    }
+
+    let mut stat_series: Vec<StatReversionSeries> = Vec::new();
+
+    for (stat_key, display_name) in &stat_keys {
+        let total_count = *base_counts.get(stat_key).unwrap_or(&0);
+        let base_freq = total_count as f64 / n as f64;
+
+        // Binary indicator series (0.0 / 1.0), length n
+        let indicator: Vec<f64> = flat_stats
+            .iter()
+            .map(|k| if *k == stat_key.as_str() { 1.0 } else { 0.0 })
+            .collect();
+
+        // Running cumulative frequency deviation at each global position
+        let mut cum_count = 0usize;
+        let deviations: Vec<f64> = (0..n)
+            .map(|i| {
+                if indicator[i] > 0.5 {
+                    cum_count += 1;
+                }
+                cum_count as f64 / (i + 1) as f64 - base_freq
+            })
+            .collect();
+
+        // Positions (0-indexed) where this stat appeared
+        let positions: Vec<usize> = (0..n)
+            .filter(|&i| indicator[i] > 0.5)
+            .collect();
+
+        // Inter-arrival gaps (in events between consecutive appearances)
+        let gaps: Vec<i64> = positions.windows(2).map(|w| (w[1] - w[0]) as i64).collect();
+
+        let mean_gap = if gaps.is_empty() {
+            0.0
+        } else {
+            gaps.iter().sum::<i64>() as f64 / gaps.len() as f64
+        };
+        let expected_gap = if base_freq > 0.0 { 1.0 / base_freq } else { 0.0 };
+        let gap_variance = if gaps.len() > 1 {
+            let m = mean_gap;
+            gaps.iter().map(|&g| (g as f64 - m).powi(2)).sum::<f64>()
+                / (gaps.len() - 1) as f64
+        } else {
+            f64::NAN
+        };
+        // Index of Dispersion: Var/Mean. For Geometric(p): (1-p)/p ≈ expected_gap - 1
+        let dispersion_index = if mean_gap > 0.0 && !gap_variance.is_nan() {
+            gap_variance / mean_gap
+        } else {
+            f64::NAN
+        };
+        // Geometric baseline dispersion
+        let geometric_dispersion = if base_freq > 0.0 && base_freq < 1.0 {
+            (1.0 - base_freq) / base_freq
+        } else {
+            f64::NAN
+        };
+
+        // Autocorrelation at lags 1, 5, 10, 13
+        let lag_autocorrs: Vec<(i64, f64)> = [1usize, 5, 10, 13]
+            .iter()
+            .map(|&lag| (lag as i64, binary_autocorr(&indicator, lag)))
+            .filter(|(_, v)| !v.is_nan())
+            .collect();
+
+        // Window conditional: for each appearance, record how many occurrences
+        // in the previous `w` events (exclusive), bucket into 0,1,2,3+
+        // Then also record how many occurrences in the NEXT `w` events.
+        let mut buckets: HashMap<usize, (i64, i64)> = HashMap::new(); // bucket → (total_next_occ, sample_count)
+        for &pos in &positions {
+            let prev_start = pos.saturating_sub(w);
+            let prev_count = (prev_start..pos).filter(|&i| indicator[i] > 0.5).count();
+            let next_end = (pos + 1 + w).min(n);
+            let next_count = ((pos + 1)..next_end)
+                .filter(|&i| indicator[i] > 0.5)
+                .count();
+            let bucket = prev_count.min(3);
+            let e = buckets.entry(bucket).or_insert((0, 0));
+            e.0 += next_count as i64;
+            e.1 += 1;
+        }
+        let mut window_buckets: Vec<ReversionBucket> = buckets
+            .iter()
+            .map(|(&prev, &(next_sum, count))| ReversionBucket {
+                prev_window_count: prev as i64,
+                sample_count: count,
+                mean_next_freq: if count > 0 {
+                    next_sum as f64 / (count as f64 * w as f64)
+                } else {
+                    0.0
+                },
+            })
+            .collect();
+        window_buckets.sort_by_key(|b| b.prev_window_count);
+
+        stat_series.push(StatReversionSeries {
+            stat_key: stat_key.clone(),
+            display_name: display_name.clone(),
+            base_freq,
+            total_count: total_count as i64,
+            deviations,
+            gaps,
+            mean_gap,
+            expected_gap,
+            gap_variance,
+            dispersion_index,
+            geometric_dispersion,
+            lag_autocorrs,
+            window_buckets,
+        });
+    }
+
+    // Sort by total_count descending so most common stats come first
+    stat_series.sort_by(|a, b| b.total_count.cmp(&a.total_count));
+
+    Ok(ReversionReport {
+        total_events: n as i64,
+        global_seqs,
+        stat_series,
+    })
 }
 
 #[cfg(test)]

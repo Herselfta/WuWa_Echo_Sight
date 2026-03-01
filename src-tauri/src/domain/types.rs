@@ -404,3 +404,51 @@ pub struct CategoryStreakReport {
     pub tier_step_ratio: f64,
     pub tier_jump_ratio: f64,
 }
+
+/* ═══ Reversion analysis ═══ */
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReversionBucket {
+    /// Count of this stat in the previous W events
+    pub prev_window_count: i64,
+    /// How many samples fell into this bucket
+    pub sample_count: i64,
+    /// Average occurrence rate in the NEXT W events: occurrences / W
+    pub mean_next_freq: f64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatReversionSeries {
+    pub stat_key: String,
+    pub display_name: String,
+    /// Global base frequency (total appearances / total events)
+    pub base_freq: f64,
+    pub total_count: i64,
+    /// Cumulative frequency deviation at each global event position
+    /// deviation[i] = (count_so_far / (i+1)) - base_freq
+    pub deviations: Vec<f64>,
+    /// Inter-arrival gaps (in events) between consecutive appearances
+    pub gaps: Vec<i64>,
+    pub mean_gap: f64,
+    /// 1 / base_freq — expected gap under i.i.d.
+    pub expected_gap: f64,
+    pub gap_variance: f64,
+    /// Var / Mean; Geometric(p) baseline ≈ (1-p)/p
+    pub dispersion_index: f64,
+    pub geometric_dispersion: f64,
+    /// (lag, autocorrelation) pairs
+    pub lag_autocorrs: Vec<(i64, f64)>,
+    /// Conditional next-window frequency by prior window count bucket
+    pub window_buckets: Vec<ReversionBucket>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReversionReport {
+    pub total_events: i64,
+    /// All analysis_seq values in order (x-axis for deviation chart)
+    pub global_seqs: Vec<i64>,
+    pub stat_series: Vec<StatReversionSeries>,
+}

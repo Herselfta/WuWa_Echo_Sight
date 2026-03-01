@@ -9,6 +9,7 @@ import type {
   EventRow,
   ExpectationItem,
   HypothesisFilter,
+  ReversionReport,
   SlotStatDistribution,
   StatDef,
   TransitionMatrix,
@@ -162,4 +163,11 @@ export async function getCategoryStreakAnalysis(
   filter?: HypothesisFilter,
 ): Promise<CategoryStreakReport> {
   return invoke("get_category_streak_analysis", { filter });
+}
+
+export async function getReversionAnalysis(
+  filter?: HypothesisFilter,
+  windowSize?: number,
+): Promise<ReversionReport> {
+  return invoke("get_reversion_analysis", { filter, windowSize });
 }

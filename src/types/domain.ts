@@ -166,3 +166,43 @@ export interface CategoryStreakReport {
   tierStepRatio: number;
   tierJumpRatio: number;
 }
+
+/* ═══ Reversion analysis ═══ */
+
+export interface ReversionBucket {
+  /** Count of this stat in the previous W events */
+  prevWindowCount: number;
+  /** How many samples fell into this bucket */
+  sampleCount: number;
+  /** Average occurrence rate in the NEXT W events: occurrences / W */
+  meanNextFreq: number;
+}
+
+export interface StatReversionSeries {
+  statKey: string;
+  displayName: string;
+  /** Global base frequency = total appearances / total events */
+  baseFreq: number;
+  totalCount: number;
+  /** Cumulative frequency deviation at each global event position */
+  deviations: number[];
+  /** Inter-arrival gaps (in event count) between consecutive appearances */
+  gaps: number[];
+  meanGap: number;
+  /** 1 / baseFreq (expected gap under i.i.d.) */
+  expectedGap: number;
+  gapVariance: number;
+  /** Var/Mean; Geometric(p) baseline ≈ (1-p)/p */
+  dispersionIndex: number;
+  geometricDispersion: number;
+  /** [lag, autocorrelation] pairs */
+  lagAutocorrs: [number, number][];
+  windowBuckets: ReversionBucket[];
+}
+
+export interface ReversionReport {
+  totalEvents: number;
+  /** All analysis_seq values in order (x-axis for deviation chart) */
+  globalSeqs: number[];
+  statSeries: StatReversionSeries[];
+}

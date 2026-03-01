@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as echarts from "echarts";
 import {
   createProbabilitySnapshot,
   editOrderedEvent,
   exportCsv,
   getCategoryStreakAnalysis,
   getEventHistory,
+  getReversionAnalysis,
   getSlotStatDistribution,
   getTransitionMatrix,
   importData,
@@ -14,8 +16,10 @@ import type {
   CategoryStreakReport,
   EventRow,
   HypothesisFilter,
+  ReversionReport,
   SlotStatCell,
   SlotStatDistribution,
+  StatReversionSeries,
   TransitionCell,
   TransitionMatrix,
 } from "../types/domain";
@@ -42,12 +46,15 @@ export function AnalysisPage() {
   const [importZipPath, setImportZipPath] = useState("");
 
   /* ── Hypothesis verification state ── */
-  const [hypoTab, setHypoTab] = useState<"transition" | "slotstat" | "streak">("transition");
+  const [hypoTab, setHypoTab] = useState<"transition" | "slotstat" | "streak" | "reversion">("transition");
   const [hypoFilter, setHypoFilter] = useState<HypothesisFilter>({});
   const [hypoLoading, setHypoLoading] = useState(false);
   const [transitionData, setTransitionData] = useState<TransitionMatrix | null>(null);
   const [slotStatData, setSlotStatData] = useState<SlotStatDistribution | null>(null);
   const [streakData, setStreakData] = useState<CategoryStreakReport | null>(null);
+  const [reversionData, setReversionData] = useState<ReversionReport | null>(null);
+  const [revWindowSize, setRevWindowSize] = useState("10");
+  const [revSelectedStats, setRevSelectedStats] = useState<string[]>([]);
 
   const statNameMap = useMemo(() => {
     const m: Record<string, string> = {};
@@ -59,14 +66,18 @@ export function AnalysisPage() {
     setHypoLoading(true);
     setMessage("");
     try {
-      const [tm, ss, sa] = await Promise.all([
+      const [tm, ss, sa, rv] = await Promise.all([
         getTransitionMatrix(hypoFilter),
         getSlotStatDistribution(hypoFilter),
         getCategoryStreakAnalysis(hypoFilter),
+        getReversionAnalysis(hypoFilter, Number(revWindowSize) || 10),
       ]);
       setTransitionData(tm);
       setSlotStatData(ss);
       setStreakData(sa);
+      setReversionData(rv);
+      // Auto-select up to 5 most frequent stats
+      setRevSelectedStats(rv.statSeries.slice(0, 5).map((s) => s.statKey));
     } catch (error) {
       setMessage(`假设验证失败: ${String(error)}`);
     } finally {
@@ -356,6 +367,24 @@ export function AnalysisPage() {
           >
             区间/连档
           </button>
+          <button
+            type="button"
+            className={`tab-btn${hypoTab === "reversion" ? " active" : ""}`}
+            onClick={() => setHypoTab("reversion")}
+          >
+            均值回归
+          </button>
+          <label style={{ fontSize: 12, marginLeft: 8 }}>
+            窗口
+            <input
+              type="number"
+              min={5}
+              max={30}
+              value={revWindowSize}
+              onChange={(e) => setRevWindowSize(e.target.value)}
+              style={{ width: 48, marginLeft: 4 }}
+            />
+          </label>
         </nav>
 
         {/* ── Tab: Transition Matrix ── */}
@@ -542,12 +571,298 @@ export function AnalysisPage() {
             )}
           </div>
         )}
+        {/* ── Tab: Mean Reversion ── */}
+        {hypoTab === "reversion" && (
+          <div style={{ marginTop: 12 }}>
+            {reversionData ? (
+              <ReversionPanel
+                data={reversionData}
+                selectedStats={revSelectedStats}
+                onToggleStat={(key) =>
+                  setRevSelectedStats((prev) =>
+                    prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+                  )
+                }
+              />
+            ) : (
+              <p style={{ fontSize: 13, color: "var(--ink-dim)" }}>点击「运行验证」获取数据</p>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
 /* ═══ Sub-components ═══ */
+
+/** ─── Reversion analysis panel ─── */
+function ReversionPanel({
+  data,
+  selectedStats,
+  onToggleStat,
+}: {
+  data: ReversionReport;
+  selectedStats: string[];
+  onToggleStat: (key: string) => void;
+}) {
+  const active = data.statSeries.filter((s) => s.totalCount > 0);
+  const selected = active.filter((s) => selectedStats.includes(s.statKey));
+
+  return (
+    <div>
+      {/* Stat selector chips */}
+      <div className="inline-row" style={{ flexWrap: "wrap", marginBottom: 10 }}>
+        <span style={{ fontSize: 12 }}>选择词条:</span>
+        {active.map((s) => {
+          const on = selectedStats.includes(s.statKey);
+          return (
+            <button
+              key={s.statKey}
+              type="button"
+              onClick={() => onToggleStat(s.statKey)}
+              style={{
+                fontSize: 11,
+                padding: "2px 8px",
+                borderRadius: 4,
+                border: "1px solid var(--line)",
+                background: on ? "var(--accent)" : "var(--panel)",
+                color: on ? "#fff" : "var(--ink)",
+                cursor: "pointer",
+              }}
+            >
+              {s.displayName} ({s.totalCount})
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Deviation line chart */}
+      {selected.length > 0 && (
+        <DeviationChart totalEvents={data.totalEvents} series={selected} />
+      )}
+
+      {/* Gap statistics table */}
+      <div style={{ overflowX: "auto", marginTop: 14 }}>
+        <strong style={{ fontSize: 13 }}>到达间隔统计（均值回归判断）</strong>
+        <p style={{ fontSize: 11, color: "var(--ink-dim)", margin: "2px 0 6px" }}>
+          离散指数 = Var/Mean。几何分布基准 ≈ (1-p)/p。若实际 &lt; 基准 → 均匀化（均值回归）；若 &gt; 基准 → 聚集爆发。
+        </p>
+        <table className="compact-table table" style={{ fontSize: 12 }}>
+          <thead>
+            <tr>
+              <th>词条</th>
+              <th>出现次数</th>
+              <th>基准频率</th>
+              <th>实际均值间隔</th>
+              <th>期望间隔 (i.i.d.)</th>
+              <th>间隔方差</th>
+              <th>离散指数</th>
+              <th>几何基准</th>
+              <th>判断</th>
+            </tr>
+          </thead>
+          <tbody>
+            {active.map((s) => {
+              const hasGaps = s.gaps.length >= 2;
+              const di = hasGaps ? s.dispersionIndex : null;
+              const gd = s.geometricDispersion;
+              let verdict = "—";
+              let color = "inherit";
+              if (di !== null && !isNaN(di) && !isNaN(gd)) {
+                if (di < gd * 0.7) { verdict = "✓ 均匀化"; color = "var(--ok, #27ae60)"; }
+                else if (di > gd * 1.4) { verdict = "⚠ 聚集爆发"; color = "var(--danger, #e74c3c)"; }
+                else { verdict = "≈ 随机"; }
+              }
+              return (
+                <tr key={s.statKey}>
+                  <td>{s.displayName}</td>
+                  <td>{s.totalCount}</td>
+                  <td>{(s.baseFreq * 100).toFixed(1)}%</td>
+                  <td>{s.meanGap > 0 ? s.meanGap.toFixed(1) : "—"}</td>
+                  <td>{s.expectedGap > 0 ? s.expectedGap.toFixed(1) : "—"}</td>
+                  <td>{hasGaps && !isNaN(s.gapVariance) ? s.gapVariance.toFixed(1) : "—"}</td>
+                  <td>{di !== null && !isNaN(di) ? di.toFixed(2) : "—"}</td>
+                  <td>{!isNaN(gd) ? gd.toFixed(2) : "—"}</td>
+                  <td style={{ color }}>{verdict}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Lag autocorrelation table */}
+      <div style={{ overflowX: "auto", marginTop: 14 }}>
+        <strong style={{ fontSize: 13 }}>滞后自相关（负值 = 负反馈均值回归）</strong>
+        <p style={{ fontSize: 11, color: "var(--ink-dim)", margin: "2px 0 6px" }}>
+          Lag-5 ≈ 1 声骸，Lag-10 ≈ 2 声骸。数据少时置信度低。
+        </p>
+        <table className="compact-table table" style={{ fontSize: 12 }}>
+          <thead>
+            <tr>
+              <th>词条</th>
+              <th>Lag-1</th>
+              <th>Lag-5</th>
+              <th>Lag-10</th>
+              <th>Lag-13</th>
+            </tr>
+          </thead>
+          <tbody>
+            {active.map((s) => {
+              const ac: Record<number, number> = {};
+              for (const [lag, v] of s.lagAutocorrs) ac[lag] = v;
+              const cell = (lag: number) => {
+                const v = ac[lag];
+                if (v === undefined) return <td>—</td>;
+                const color = v < -0.15 ? "var(--ok, #27ae60)" : v > 0.25 ? "var(--danger, #e74c3c)" : "inherit";
+                return <td style={{ color }}>{v.toFixed(3)}</td>;
+              };
+              return (
+                <tr key={s.statKey}>
+                  <td>{s.displayName}</td>
+                  {cell(1)}{cell(5)}{cell(10)}{cell(13)}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Window conditional table */}
+      {selected.length > 0 && (
+        <div style={{ overflowX: "auto", marginTop: 14 }}>
+          <strong style={{ fontSize: 13 }}>窗口条件频率（前 W 次出现次数 → 后 W 次出现率）</strong>
+          <p style={{ fontSize: 11, color: "var(--ink-dim)", margin: "2px 0 6px" }}>
+            若在前 W 事件中出现越多，后 W 出现率越低 → 均值回归；反之 → 聚集。
+          </p>
+          {selected.map((s) => (
+            <div key={s.statKey} style={{ marginBottom: 10 }}>
+              <span style={{ fontSize: 12 }}>
+                <strong>{s.displayName}</strong>（基准 {(s.baseFreq * 100).toFixed(1)}%/事件）
+              </span>
+              <div className="inline-row" style={{ flexWrap: "wrap", marginTop: 4 }}>
+                {s.windowBuckets.map((b) => (
+                  <div
+                    key={b.prevWindowCount}
+                    style={{
+                      fontSize: 11,
+                      padding: "4px 10px",
+                      borderRadius: 4,
+                      border: "1px solid var(--line)",
+                      background: "var(--panel)",
+                      textAlign: "center",
+                    }}
+                  >
+                    <div style={{ fontWeight: 600 }}>前={b.prevWindowCount}{b.prevWindowCount >= 3 ? "+" : ""}</div>
+                    <div>n={b.sampleCount}</div>
+                    <div
+                      style={{
+                        color:
+                          b.prevWindowCount >= 2 && b.meanNextFreq < s.baseFreq * 0.6
+                            ? "var(--ok, #27ae60)"
+                            : "inherit",
+                      }}
+                    >
+                      后={( b.meanNextFreq * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                ))}
+                {s.windowBuckets.length === 0 && (
+                  <span style={{ fontSize: 11, color: "var(--ink-dim)" }}>数据不足</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** ECharts line chart: running cumulative frequency deviation per stat */
+function DeviationChart({
+  totalEvents,
+  series,
+}: {
+  totalEvents: number;
+  series: StatReversionSeries[];
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current || series.length === 0) return;
+
+    const chart = echarts.init(containerRef.current);
+    const palette = [
+      "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
+      "#1abc9c", "#e67e22", "#34495e", "#e91e63", "#00bcd4",
+    ];
+
+    chart.setOption({
+      animation: false,
+      tooltip: {
+        trigger: "axis",
+        formatter: (params: unknown) => {
+          const p = params as { seriesName: string; value: [number, number] }[];
+          return p
+            .map((item) => `${item.seriesName}: ${(item.value[1] * 100).toFixed(2)}%`)
+            .join("<br/>");
+        },
+      },
+      legend: { top: 4, type: "scroll", textStyle: { fontSize: 11 } },
+      grid: { left: 48, right: 16, top: 36, bottom: 36 },
+      xAxis: {
+        type: "value",
+        name: "事件序号",
+        min: 0,
+        max: totalEvents - 1,
+        nameTextStyle: { fontSize: 11 },
+      },
+      yAxis: {
+        type: "value",
+        name: "频率偏差",
+        nameTextStyle: { fontSize: 11 },
+        axisLabel: {
+          formatter: (v: number) => `${(v * 100).toFixed(1)}%`,
+          fontSize: 10,
+        },
+        splitLine: { lineStyle: { type: "dashed" } },
+      },
+      series: [
+        // Y=0 reference line
+        {
+          name: "基准线",
+          type: "line",
+          data: [[0, 0], [totalEvents - 1, 0]],
+          lineStyle: { color: "#aaa", type: "dashed", width: 1 },
+          symbol: "none",
+          emphasis: { disabled: true },
+        },
+        ...series.map((s, idx) => ({
+          name: s.displayName,
+          type: "line" as const,
+          data: s.deviations.map((d, i) => [i, d] as [number, number]),
+          lineStyle: { color: palette[idx % palette.length], width: 2 },
+          symbol: "none",
+          smooth: false,
+        })),
+      ],
+    });
+
+    const obs = new ResizeObserver(() => chart.resize());
+    obs.observe(containerRef.current);
+    return () => { obs.disconnect(); chart.dispose(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, totalEvents]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={{ width: "100%", height: 260, border: "1px solid var(--line)", borderRadius: 4 }}
+    />
+  );
+}
 
 /** Transition matrix heatmap rendered as an HTML table with color-coded residuals */
 function TransitionHeatmap({
