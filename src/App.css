@@ -477,6 +477,13 @@ button:hover {
   border-style: dashed;
 }
 
+.chain-item.dragging {
+  opacity: 0.4;
+  background: var(--panel);
+  box-shadow: none;
+  border-style: dashed;
+}
+
 .chain-item span {
   font-size: 13px;
 }
@@ -486,23 +493,6 @@ button:hover {
   height: 20px;
   font-size: 12px;
   padding: 0 4px;
-}
-
-.drag-handle {
-  min-width: 16px;
-  padding: 1px 2px;
-  font-size: 11px;
-  color: var(--muted);
-  background: transparent;
-  border: none;
-  cursor: grab;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: none;
-}
-
-.drag-handle:active {
-  cursor: grabbing;
 }
 
 .drag-insert-line {
@@ -520,19 +510,30 @@ button:hover {
   pointer-events: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border: 1px solid #7dd3fc;
-  background: rgba(239, 246, 255, 0.96);
-  color: #0c4a6e;
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 12px;
-  box-shadow: 0 10px 24px rgba(14, 116, 144, 0.24);
+  gap: 4px;
+  min-height: 24px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.15), 0 0 0 1px rgba(14, 165, 233, 0.1);
+  font-size: 13px;
+  transform: translate(-50%, -50%); /* Center the ghost under the cursor */
+  transform-origin: center center;
+  /* Add subtle pop in */
+  animation: ghost-pop 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes ghost-pop {
+  0% { transform: translate(-50%, -50%) scale(0.9); opacity: 0; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
 }
 
 .drag-ghost-icon {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
     monospace;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .chain-op {

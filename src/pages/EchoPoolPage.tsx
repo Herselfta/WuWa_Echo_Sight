@@ -407,6 +407,8 @@ export function EchoPoolPage() {
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
   const [batchPresetId, setBatchPresetId] = useState("");
   const [pendingBatchDelete, setPendingBatchDelete] = useState(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startPosRef = useRef({ x: 0, y: 0 });
 
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string; kind: ToastKind } | null>(null);
@@ -2468,17 +2470,18 @@ export function EchoPoolPage() {
                             <div className="chain-row" ref={expectationRowRef}>
                               {expectationStats.length === 0 ? <span className="chain-empty">无</span> : null}
                               {expectationStats.map((statKey, idx) => {
-                                if (draggingExpectationFromIndex === idx) {
-                                  return null;
-                                }
                                 const stat = statMap.get(statKey);
                                 const selected = activeExpectationIndex === idx;
+                                const isDraggingThis = draggingExpectationFromIndex === idx;
+                                const classNames = ["chain-item"];
+                                if (selected) classNames.push("active");
+                                if (isDraggingThis) classNames.push("dragging");
+
                                 const availableStats = statDefs.filter(
                                   (x) => x.statKey === statKey || !expectationStats.includes(x.statKey),
                                 );
                                 const hideOperator =
-                                  draggingExpectationFromIndex !== null &&
-                                  (idx === draggingExpectationFromIndex || idx + 1 === draggingExpectationFromIndex);
+                                  draggingExpectationFromIndex !== null && idx === draggingExpectationFromIndex;
 
                                 return (
                                   <Fragment key={`exp-${idx}-${statKey}`}>
@@ -2487,22 +2490,13 @@ export function EchoPoolPage() {
                                     ) : null}
                                     <div className="chain-fragment">
                                       <div
-                                        className={selected ? "chain-item active" : "chain-item"}
+                                        className={classNames.join(" ")}
                                         data-drag-kind="expectation"
                                         data-drag-index={idx}
-                                        onClick={() => setActiveExpectationIndex(idx)}
-                                        onContextMenu={(e) => {
-                                          e.preventDefault();
-                                          removeExpectationAt(idx);
-                                        }}
-                                        title="单击编辑，右键删除"
-                                      >
-                                        <button
-                                          type="button"
-                                          className="drag-handle"
-                                          onPointerDown={(e) => {
-                                            e.stopPropagation();
-                                            e.preventDefault();
+                                        onPointerDown={(e) => {
+                                          if ((e.target as HTMLElement).tagName === "SELECT") return;
+                                          startPosRef.current = { x: e.clientX, y: e.clientY };
+                                          longPressTimerRef.current = setTimeout(() => {
                                             setDragState({
                                               kind: "expectation",
                                               fromIndex: idx,
@@ -2512,12 +2506,32 @@ export function EchoPoolPage() {
                                               y: e.clientY,
                                               label: stat?.displayName ?? statKey,
                                             });
-                                          }}
-                                          onClick={(e) => e.stopPropagation()}
-                                          title="按住拖动排序"
-                                        >
-                                          ::
-                                        </button>
+                                            longPressTimerRef.current = null;
+                                          }, 300);
+                                        }}
+                                        onPointerMove={(e) => {
+                                          if (longPressTimerRef.current) {
+                                            const dx = e.clientX - startPosRef.current.x;
+                                            const dy = e.clientY - startPosRef.current.y;
+                                            if (Math.hypot(dx, dy) > 8) {
+                                              clearTimeout(longPressTimerRef.current);
+                                              longPressTimerRef.current = null;
+                                            }
+                                          }
+                                        }}
+                                        onPointerUp={() => {
+                                          if (longPressTimerRef.current) {
+                                            clearTimeout(longPressTimerRef.current);
+                                            longPressTimerRef.current = null;
+                                            setActiveExpectationIndex(idx);
+                                          }
+                                        }}
+                                        onContextMenu={(e) => {
+                                          e.preventDefault();
+                                          removeExpectationAt(idx);
+                                        }}
+                                        title="长按拖动，点击编辑，右键删除"
+                                      >
                                         {selected ? (
                                           <select
                                             value={statKey}
@@ -2527,6 +2541,7 @@ export function EchoPoolPage() {
                                                 prev.map((item, itemIdx) => (itemIdx === idx ? next : item)),
                                               );
                                             }}
+                                            onPointerDown={(e) => e.stopPropagation()}
                                           >
                                             {availableStats.map((s) => (
                                               <option key={s.statKey} value={s.statKey}>
@@ -2607,11 +2622,13 @@ export function EchoPoolPage() {
                                 </div>
                               ))}
                               {slotsDraft.map((slot, idx) => {
-                                if (draggingSlotFromIndex === idx) {
-                                  return null;
-                                }
                                 const stat = statMap.get(slot.statKey);
                                 const selected = activeSlotIndex === idx;
+                                const isDraggingThis = draggingSlotFromIndex === idx;
+                                const classNames = ["chain-item"];
+                                if (selected) classNames.push("active");
+                                if (isDraggingThis) classNames.push("dragging");
+
                                 const currentUsed = slotsDraft.map((x) => x.statKey);
                                 const availableStats = statDefs.filter(
                                   (x) =>
@@ -2627,23 +2644,13 @@ export function EchoPoolPage() {
                                       <span className="drag-insert-line" aria-hidden="true" />
                                     ) : null}
                                     <div
-                                      className={selected ? "chain-item active" : "chain-item"}
+                                      className={classNames.join(" ")}
                                       data-drag-kind="slot"
                                       data-drag-index={idx}
-                                      onClick={() => setActiveSlotIndex(idx)}
-                                      onContextMenu={(e) => {
-                                        e.preventDefault();
-                                        removeSlotAt(idx);
-                                      }}
-                                      title="单击编辑，右键删除"
-                                    >
-                                      <span className="slot-label">S{previewSlotNo}</span>
-                                      <button
-                                        type="button"
-                                        className="drag-handle"
-                                        onPointerDown={(e) => {
-                                          e.stopPropagation();
-                                          e.preventDefault();
+                                      onPointerDown={(e) => {
+                                        if ((e.target as HTMLElement).tagName === "SELECT") return;
+                                        startPosRef.current = { x: e.clientX, y: e.clientY };
+                                        longPressTimerRef.current = setTimeout(() => {
                                           setDragState({
                                             kind: "slot",
                                             fromIndex: idx,
@@ -2653,14 +2660,35 @@ export function EchoPoolPage() {
                                             y: e.clientY,
                                             label: `S${previewSlotNo} ${statKeyToAbbr(slot.statKey)}${slot.tierIndex}`,
                                           });
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
-                                        title="按住拖动排序"
-                                      >
-                                        ::
-                                      </button>
+                                          longPressTimerRef.current = null;
+                                        }, 300);
+                                      }}
+                                      onPointerMove={(e) => {
+                                        if (longPressTimerRef.current) {
+                                          const dx = e.clientX - startPosRef.current.x;
+                                          const dy = e.clientY - startPosRef.current.y;
+                                          if (Math.hypot(dx, dy) > 8) {
+                                            clearTimeout(longPressTimerRef.current);
+                                            longPressTimerRef.current = null;
+                                          }
+                                        }
+                                      }}
+                                      onPointerUp={() => {
+                                        if (longPressTimerRef.current) {
+                                          clearTimeout(longPressTimerRef.current);
+                                          longPressTimerRef.current = null;
+                                          setActiveSlotIndex(idx);
+                                        }
+                                      }}
+                                      onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        removeSlotAt(idx);
+                                      }}
+                                      title="长按拖动，点击编辑，右键删除"
+                                    >
+                                      <span className="slot-label">S{previewSlotNo}</span>
                                       {selected ? (
-                                        <div className="inline-row">
+                                        <div className="inline-row" onPointerDown={(e) => e.stopPropagation()}>
                                           <select
                                             value={slot.statKey}
                                             onChange={(e) => {

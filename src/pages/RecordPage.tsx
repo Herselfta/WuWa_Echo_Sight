@@ -240,6 +240,8 @@ export function RecordPage() {
   const dragStateRef = useRef<DragState | null>(null);
   const createExpRowRef = useRef<HTMLDivElement | null>(null);
   const createSlotRowRef = useRef<HTMLDivElement | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startPosRef = useRef({ x: 0, y: 0 });
 
   /* === record event === */
   const [statKey, setStatKey] = useState<string>("crit_rate");
@@ -261,11 +263,24 @@ export function RecordPage() {
   const [loadingProb, setLoadingProb] = useState(false);
   const [message, setMessage] = useState("");
   const [msgKind, setMsgKind] = useState<"info" | "success" | "error">("info");
+  const [messageId, setMessageId] = useState(0);
 
   const showMsg = (text: string, kind: "info" | "success" | "error" = "info") => {
     setMessage(text);
     setMsgKind(kind);
+    if (text) {
+      setMessageId((id) => id + 1);
+    }
   };
+
+  useEffect(() => {
+    if (!message) return;
+    const currentId = messageId;
+    const tid = setTimeout(() => {
+      setMessage((m) => (m && messageId === currentId ? "" : m));
+    }, 2600);
+    return () => clearTimeout(tid);
+  }, [message, messageId]);
 
   /* ── selected echo derivations ───── */
 
@@ -768,13 +783,16 @@ export function RecordPage() {
     <div className="chain-row" ref={createExpRowRef}>
       {stats.length === 0 ? <span className="chain-empty">点击 + 添加</span> : null}
       {stats.map((sk, idx) => {
-        if (draggingExpFromIndex === idx) return null;
         const stat = statMap.get(sk);
         const selected = activeIdx === idx;
         const availStats = statDefs.filter((x) => x.statKey === sk || !stats.includes(x.statKey));
-        const hideOperator =
-          draggingExpFromIndex !== null &&
-          (idx === draggingExpFromIndex || idx + 1 === draggingExpFromIndex);
+
+        const hideOperator = draggingExpFromIndex !== null && idx === draggingExpFromIndex;
+        const isDraggingThis = draggingExpFromIndex === idx;
+        const classNames = ["chain-item"];
+        if (selected) classNames.push("active");
+        if (isDraggingThis) classNames.push("dragging");
+
         return (
           <Fragment key={`exp-${idx}-${sk}`}>
             {expInsertBeforeIndex === idx ? (
@@ -782,19 +800,15 @@ export function RecordPage() {
             ) : null}
             <div className="chain-fragment">
               <div
-                className={selected ? "chain-item active" : "chain-item"}
+                className={classNames.join(" ")}
                 data-drag-kind="expectation"
                 data-drag-index={idx}
-                onClick={() => setActiveIdx(idx)}
-                onContextMenu={(e) => { e.preventDefault(); removeFn(idx); }}
-                title="单击编辑，右键删除"
-              >
-                <button
-                  type="button"
-                  className="drag-handle"
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
+                onPointerDown={(e) => {
+                  // ignore if clicking select inside
+                  if ((e.target as HTMLElement).tagName === "SELECT") return;
+
+                  startPosRef.current = { x: e.clientX, y: e.clientY };
+                  longPressTimerRef.current = setTimeout(() => {
                     setDragState({
                       kind: "expectation",
                       fromIndex: idx,
@@ -804,12 +818,29 @@ export function RecordPage() {
                       y: e.clientY,
                       label: stat?.displayName ?? sk,
                     });
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  title="按住拖动排序"
-                >
-                  ::
-                </button>
+                    longPressTimerRef.current = null;
+                  }, 300);
+                }}
+                onPointerMove={(e) => {
+                  if (longPressTimerRef.current) {
+                    const dx = e.clientX - startPosRef.current.x;
+                    const dy = e.clientY - startPosRef.current.y;
+                    if (Math.hypot(dx, dy) > 8) {
+                      clearTimeout(longPressTimerRef.current);
+                      longPressTimerRef.current = null;
+                    }
+                  }
+                }}
+                onPointerUp={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                    setActiveIdx(idx);
+                  }
+                }}
+                onContextMenu={(e) => { e.preventDefault(); removeFn(idx); }}
+                title="长按拖动，点击编辑，右键删除"
+              >
                 {selected ? (
                   <select
                     value={sk}
@@ -818,6 +849,7 @@ export function RecordPage() {
                       setStats((prev) => prev.map((item, i) => (i === idx ? v : item)));
                     }}
                     onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
                   >
                     {availStats.map((s) => (
                       <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
@@ -858,9 +890,13 @@ export function RecordPage() {
     <div className="chain-row" ref={createSlotRowRef}>
       {slots.length === 0 ? <span className="chain-empty">点击 + 添加初始词条</span> : null}
       {slots.map((slot, idx) => {
-        if (draggingSlotFromIndex === idx) return null;
         const stat = statMap.get(slot.statKey);
         const selected = activeIdx === idx;
+        const isDraggingThis = draggingSlotFromIndex === idx;
+        const classNames = ["chain-item"];
+        if (selected) classNames.push("active");
+        if (isDraggingThis) classNames.push("dragging");
+
         const currentUsed = slots.map((x) => x.statKey);
         const availStats = statDefs.filter(
           (x) => x.statKey === slot.statKey || !currentUsed.includes(x.statKey),
@@ -874,20 +910,15 @@ export function RecordPage() {
             ) : null}
             <div className="chain-fragment">
               <div
-                className={selected ? "chain-item active" : "chain-item"}
+                className={classNames.join(" ")}
                 data-drag-kind="slot"
                 data-drag-index={idx}
-                onClick={() => setActiveIdx(idx)}
                 onContextMenu={(e) => { e.preventDefault(); removeFn(idx); }}
-                title="单击编辑，右键删除"
-              >
-                <span className="slot-label">S{idx + 1}</span>
-                <button
-                  type="button"
-                  className="drag-handle"
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
+                onPointerDown={(e) => {
+                  if ((e.target as HTMLElement).tagName === "SELECT") return;
+
+                  startPosRef.current = { x: e.clientX, y: e.clientY };
+                  longPressTimerRef.current = setTimeout(() => {
                     setDragState({
                       kind: "slot",
                       fromIndex: idx,
@@ -897,14 +928,31 @@ export function RecordPage() {
                       y: e.clientY,
                       label: `S${idx + 1} ${statKeyToAbbr(slot.statKey)}${slot.tierIndex}`,
                     });
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  title="按住拖动排序"
-                >
-                  ::
-                </button>
+                    longPressTimerRef.current = null;
+                  }, 300);
+                }}
+                onPointerMove={(e) => {
+                  if (longPressTimerRef.current) {
+                    const dx = e.clientX - startPosRef.current.x;
+                    const dy = e.clientY - startPosRef.current.y;
+                    if (Math.hypot(dx, dy) > 8) {
+                      clearTimeout(longPressTimerRef.current);
+                      longPressTimerRef.current = null;
+                    }
+                  }
+                }}
+                onPointerUp={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                    setActiveIdx(idx);
+                  }
+                }}
+                title="长按拖动，点击编辑，右键删除"
+              >
+                <span className="slot-label">S{idx + 1}</span>
                 {selected ? (
-                  <div className="inline-row slot-inline-edit">
+                  <div className="inline-row slot-inline-edit" onPointerDown={e => e.stopPropagation()}>
                     <select
                       value={slot.statKey}
                       onChange={(e) => {
