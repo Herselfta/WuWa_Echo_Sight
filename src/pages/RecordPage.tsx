@@ -1125,7 +1125,66 @@ export function RecordPage() {
           <form className="card record-card record-event-form" onSubmit={handleRecordEvent}>
             <span className="record-section-title">强化录入</span>
 
-            {/* 声骸选择 */}
+            {/* 录入字段 + 按钮 — 同一行紧凑布局 */}
+            <div className="record-event-inline-row">
+              <label className="record-field record-field-compact">
+                <span className="record-field-label">时间</span>
+                <input
+                  type="datetime-local"
+                  value={eventTimeLocal}
+                  onChange={(e) => setEventTimeLocal(e.target.value)}
+                />
+              </label>
+
+              <label className="record-field record-field-compact">
+                <span className="record-field-label">词条</span>
+                <select value={selectedStat?.statKey ?? ""} onChange={(e) => setStatKey(e.target.value)}>
+                  {availableStatDefs.map((s) => (
+                    <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="record-field record-field-compact">
+                <span className="record-field-label">档位</span>
+                <select value={tierIndex} onChange={(e) => setTierIndex(Number(e.target.value))}>
+                  {(selectedStat?.tiers ?? []).map((t) => (
+                    <option key={t.tierIndex} value={t.tierIndex}>
+                      档{t.tierIndex} ({formatScaledValue(selectedStat?.unit ?? "flat", t.valueScaled)})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="record-event-actions">
+                <button
+                  type="submit" className="btn-primary"
+                  disabled={saving || !selectedEchoId || availableSlots.length === 0 || availableStatDefs.length === 0}
+                >
+                  录入
+                </button>
+                <button
+                  type="button"
+                  className={undoConfirmId && eventHistory.length > 0 ? "btn-danger" : ""}
+                  disabled={saving || eventHistory.length === 0}
+                  onClick={() => eventHistory.length > 0 && handleUndoEvent(eventHistory[0].eventId)}
+                  title="撤销最近一次录入"
+                >
+                  {undoConfirmId && eventHistory.length > 0 && undoConfirmId === eventHistory[0].eventId ? "确认撤销" : "撤销"}
+                </button>
+              </div>
+            </div>
+
+            {/* 预览 */}
+            <span className="record-preview-value">
+              {selectedStat ? (
+                <>
+                  S{nextSlotNo} {selectedStat.displayName} 档{tierIndex} = {formatScaledValue(selectedStat.unit, selectedTierValue)}
+                </>
+              ) : "—"}
+            </span>
+
+            {/* 声骸选择 — 移至下方 */}
             <label className="record-field">
               <span className="record-field-label">目标声骸</span>
               <select value={selectedEchoId} onChange={(e) => setSelectedEchoId(e.target.value)}>
@@ -1221,64 +1280,6 @@ export function RecordPage() {
                 ) : null}
               </div>
             ) : null}
-
-            {/* 录入字段 - 紧凑布局 */}
-            <div className="record-event-fields">
-              <label className="record-field">
-                <span className="record-field-label">词条</span>
-                <select value={selectedStat?.statKey ?? ""} onChange={(e) => setStatKey(e.target.value)}>
-                  {availableStatDefs.map((s) => (
-                    <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="record-field">
-                <span className="record-field-label">档位</span>
-                <select value={tierIndex} onChange={(e) => setTierIndex(Number(e.target.value))}>
-                  {(selectedStat?.tiers ?? []).map((t) => (
-                    <option key={t.tierIndex} value={t.tierIndex}>
-                      档{t.tierIndex} ({formatScaledValue(selectedStat?.unit ?? "flat", t.valueScaled)})
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="record-field">
-                <span className="record-field-label">时间</span>
-                <input
-                  type="datetime-local"
-                  value={eventTimeLocal}
-                  onChange={(e) => setEventTimeLocal(e.target.value)}
-                />
-              </label>
-            </div>
-
-            {/* 预览 + 提交 */}
-            <div className="record-event-submit-row">
-              <span className="record-preview-value">
-                {selectedStat ? (
-                  <>
-                    S{nextSlotNo} {selectedStat.displayName} 档{tierIndex} = {formatScaledValue(selectedStat.unit, selectedTierValue)}
-                  </>
-                ) : "—"}
-              </span>
-              <button
-                type="submit" className="btn-primary"
-                disabled={saving || !selectedEchoId || availableSlots.length === 0 || availableStatDefs.length === 0}
-              >
-                录入
-              </button>
-              <button
-                type="button"
-                className={undoConfirmId && eventHistory.length > 0 ? "btn-danger" : ""}
-                disabled={saving || eventHistory.length === 0}
-                onClick={() => eventHistory.length > 0 && handleUndoEvent(eventHistory[0].eventId)}
-                title="撤销最近一次录入"
-              >
-                {undoConfirmId && eventHistory.length > 0 && undoConfirmId === eventHistory[0].eventId ? "确认撤销" : "撤销"}
-              </button>
-            </div>
           </form>
         </div>
 

@@ -60,18 +60,20 @@ interface EchoFilters {
   mainStatKey: string;
   status: "all" | EchoStatus;
   openedSlots: "all" | "0" | "1" | "2" | "3" | "4" | "5";
+  presetId: string;
   searchText: string;
   substatMode: SubstatFilterMode;
   substatStatKeys: string[];
   sortBy: EchoSortBy;
 }
 
-const ECHO_FILTER_STORAGE_KEY = "wuwa.echo-pool.filters.v1";
+const ECHO_FILTER_STORAGE_KEY = "wuwa.echo-pool.filters.v2";
 const DEFAULT_ECHO_FILTERS: EchoFilters = {
   costClass: "all",
   mainStatKey: "all",
   status: "all",
   openedSlots: "all",
+  presetId: "all",
   searchText: "",
   substatMode: "or",
   substatStatKeys: [],
@@ -114,6 +116,7 @@ function isDefaultEchoFilters(filters: EchoFilters): boolean {
     filters.mainStatKey === DEFAULT_ECHO_FILTERS.mainStatKey &&
     filters.status === DEFAULT_ECHO_FILTERS.status &&
     filters.openedSlots === DEFAULT_ECHO_FILTERS.openedSlots &&
+    filters.presetId === DEFAULT_ECHO_FILTERS.presetId &&
     filters.searchText.trim() === DEFAULT_ECHO_FILTERS.searchText &&
     filters.substatMode === DEFAULT_ECHO_FILTERS.substatMode &&
     filters.substatStatKeys.length === 0 &&
@@ -147,6 +150,7 @@ function parseEchoFilters(raw: string | null): EchoFilters {
       parsed.openedSlots === "5"
         ? parsed.openedSlots
         : "all";
+    const presetId = typeof parsed.presetId === "string" ? parsed.presetId : "all";
     const searchText = typeof parsed.searchText === "string" ? parsed.searchText : "";
     const substatMode = sanitizeSubstatFilterMode(parsed.substatMode);
     const substatStatKeys = Array.isArray(parsed.substatStatKeys)
@@ -164,6 +168,7 @@ function parseEchoFilters(raw: string | null): EchoFilters {
       mainStatKey,
       status,
       openedSlots,
+      presetId,
       searchText,
       substatMode,
       substatStatKeys,
@@ -408,6 +413,19 @@ export function EchoPoolPage() {
       const normalizedSearch = echoFilters.searchText.trim().toLocaleLowerCase();
       const requiredSubstats = echoFilters.substatStatKeys;
 
+      // build preset chain for preset filter
+      let filterPresetChain: { stats: string[]; ops: RelOp[] } | null = null;
+      if (echoFilters.presetId !== "all") {
+        if (echoFilters.presetId === "__none__") {
+          filterPresetChain = { stats: [], ops: [] }; // sentinel for "no preset"
+        } else {
+          const filterPreset = expectationPresets.find((p) => p.presetId === echoFilters.presetId);
+          if (filterPreset) {
+            filterPresetChain = buildExpectationChain(filterPreset.items);
+          }
+        }
+      }
+
       const filtered = echoes.filter((echo) => {
         if (echoFilters.costClass !== "all" && String(echo.costClass) !== echoFilters.costClass) {
           return false;
@@ -420,6 +438,16 @@ export function EchoPoolPage() {
         }
         if (echoFilters.openedSlots !== "all" && String(echo.openedSlotsCount) !== echoFilters.openedSlots) {
           return false;
+        }
+        if (echoFilters.presetId !== "all" && filterPresetChain) {
+          const echoChain = buildExpectationChain(echo.expectations);
+          if (echoFilters.presetId === "__none__") {
+            if (echo.expectations.length > 0) return false;
+          } else {
+            if (!areChainsEqual(echoChain.stats, echoChain.ops, filterPresetChain.stats, filterPresetChain.ops)) {
+              return false;
+            }
+          }
         }
         if (normalizedSearch) {
           const searchBlob = [echo.nickname ?? "", echo.echoId].join(" ").toLocaleLowerCase();
@@ -715,18 +743,13 @@ export function EchoPoolPage() {
 
   useEffect(() => {
     if (!editingEchoId) {
-      if (selectedPresetId !== null) {
-        setSelectedPresetId(null);
-      }
+      setSelectedPresetId(null);
       return;
     }
 
     const matchedPreset = findPresetByChain(expectationPresets, expectationStats, expectationOps);
-    const matchedPresetId = matchedPreset?.presetId ?? null;
-    if (selectedPresetId !== matchedPresetId) {
-      setSelectedPresetId(matchedPresetId);
-    }
-  }, [editingEchoId, expectationStats, expectationOps, expectationPresets, selectedPresetId]);
+    setSelectedPresetId(matchedPreset?.presetId ?? null);
+  }, [editingEchoId, expectationStats, expectationOps, expectationPresets]);
 
   useEffect(() => {
     if (!dragState) {
@@ -1121,7 +1144,7 @@ export function EchoPoolPage() {
     setPresetSelectorOpen(false);
     setPresetNamingOpen(false);
     setPresetNamingValue("");
-    setSelectedPresetId(null);
+    // selectedPresetId is auto-synced by the effect based on expectation chain
     setPresetDraftId(null);
     setPresetDraftName("");
     setPresetDraftStats([]);
@@ -2087,6 +2110,24 @@ export function EchoPoolPage() {
                 <option value="3">3</option>
                 <option value="4">4</option>
                 <option value="5">5</option>
+              </select>
+            </label>
+            <label>
+              预设
+              <select
+                className="echo-toolbar-control"
+                value={echoFilters.presetId}
+                onChange={(e) =>
+                  setEchoFilters((prev) => ({ ...prev, presetId: e.target.value }))
+                }
+              >
+                <option value="all">全部</option>
+                <option value="__none__">无预设</option>
+                {expectationPresets.map((preset) => (
+                  <option key={preset.presetId} value={preset.presetId}>
+                    {preset.name}
+                  </option>
+                ))}
               </select>
             </label>
             <label>
