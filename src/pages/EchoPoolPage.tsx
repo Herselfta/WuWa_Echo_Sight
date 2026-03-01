@@ -383,6 +383,7 @@ export function EchoPoolPage() {
   const [presetSelectorOpen, setPresetSelectorOpen] = useState(false);
   const [presetNamingOpen, setPresetNamingOpen] = useState(false);
   const [presetNamingValue, setPresetNamingValue] = useState("");
+  const [presetConflictId, setPresetConflictId] = useState<string | null>(null);
   const [presetCreateSource, setPresetCreateSource] = useState<PresetCreateSource>("selector");
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [presetPopoverPos, setPresetPopoverPos] = useState({ left: 8, top: 8, width: 240 });
@@ -1361,7 +1362,7 @@ export function EchoPoolPage() {
     window.requestAnimationFrame(() => syncPresetPopoverPosition());
   };
 
-  const createPresetFromCurrent = async () => {
+  const createPresetFromCurrent = async (forceOverwriteId?: string) => {
     if (presetCreateSource === "selector" && !editingEcho) {
       setMessage("请先点击某条声骸的“管理”，再设为预设。");
       return;
@@ -1381,22 +1382,33 @@ export function EchoPoolPage() {
         return;
       }
 
-      const existingPreset = findPresetByChain(expectationPresets, expectationStats, expectationOps);
-      if (existingPreset) {
-        setSelectedPresetId(existingPreset.presetId);
-        setPresetNamingOpen(false);
-        setPresetSelectorOpen(false);
-        setMessage(`已存在相同内容的预设「${existingPreset.name}」，已自动选中。`);
-        return;
+      if (!forceOverwriteId) {
+        const existingPreset = findPresetByChain(expectationPresets, expectationStats, expectationOps);
+        if (existingPreset) {
+          setSelectedPresetId(existingPreset.presetId);
+          setPresetNamingOpen(false);
+          setPresetSelectorOpen(false);
+          setMessage(`已存在相同内容的预设「${existingPreset.name}」，已自动选中。`);
+          return;
+        }
       }
     }
 
     const generatedName = presetNamingValue.trim() || buildDefaultPresetName();
 
+    if (!forceOverwriteId) {
+      const conflict = expectationPresets.find((p) => p.name === generatedName);
+      if (conflict) {
+        setPresetConflictId(conflict.presetId);
+        return;
+      }
+    }
+
     setSaving(true);
     setMessage("");
     try {
       const result = await saveExpectationPreset({
+        presetId: forceOverwriteId,
         name: generatedName,
         items,
       });
@@ -1404,6 +1416,7 @@ export function EchoPoolPage() {
       setSelectedPresetId(result.presetId);
       setPresetNamingOpen(false);
       setPresetSelectorOpen(false);
+      setPresetConflictId(null);
       if (!isFromSelector) {
         openPresetEditor({
           presetId: result.presetId,
@@ -1883,14 +1896,39 @@ export function EchoPoolPage() {
             void createPresetFromCurrent();
           }}
         >
-          <input
-            ref={presetNamingInputRef}
-            value={presetNamingValue}
-            onChange={(e) => setPresetNamingValue(e.target.value)}
-          />
-          <button type="submit" disabled={saving}>
-            确定
-          </button>
+          {presetConflictId ? (
+            <div className="preset-conflict-alert">
+              <span>已存在同名预设「{presetNamingValue.trim()}」，是否覆盖？</span>
+              <div className="preset-conflict-actions">
+                <button type="button" disabled={saving} onClick={() => {
+                  setPresetNamingOpen(false);
+                  setPresetConflictId(null);
+                }}>取消</button>
+                <button type="button" disabled={saving} onClick={() => {
+                  setPresetConflictId(null);
+                  requestAnimationFrame(() => {
+                    const input = presetNamingInputRef.current;
+                    if (input) {
+                      input.focus();
+                      input.select();
+                    }
+                  });
+                }}>重命名</button>
+                <button type="button" disabled={saving} className="btn-danger" onClick={() => void createPresetFromCurrent(presetConflictId)}>确定</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <input
+                ref={presetNamingInputRef}
+                value={presetNamingValue}
+                onChange={(e) => setPresetNamingValue(e.target.value)}
+              />
+              <button type="submit" disabled={saving}>
+                确定
+              </button>
+            </>
+          )}
         </form>
       ) : null}
 

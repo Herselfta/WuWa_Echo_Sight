@@ -226,6 +226,7 @@ export function RecordPage() {
   const [createPresetSelectorOpen, setCreatePresetSelectorOpen] = useState(false);
   const [createPresetNamingOpen, setCreatePresetNamingOpen] = useState(false);
   const [createPresetNamingValue, setCreatePresetNamingValue] = useState("");
+  const [createPresetConflictId, setCreatePresetConflictId] = useState<string | null>(null);
   const createPresetBtnRef = useRef<HTMLButtonElement | null>(null);
   const createPresetMenuRef = useRef<HTMLDivElement | null>(null);
   const createPresetNamingInputRef = useRef<HTMLInputElement | null>(null);
@@ -352,6 +353,7 @@ export function RecordPage() {
       if (createPresetNamingFormRef.current?.contains(e.target)) return;
       setCreatePresetSelectorOpen(false);
       setCreatePresetNamingOpen(false);
+      setCreatePresetConflictId(null);
     };
     window.addEventListener("pointerdown", handler);
     return () => window.removeEventListener("pointerdown", handler);
@@ -584,18 +586,28 @@ export function RecordPage() {
     requestAnimationFrame(() => syncCreatePresetNamingPos());
   };
 
-  const handleSaveCreatePreset = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveCreatePreset = async (e?: React.FormEvent, forceOverwriteId?: string) => {
+    if (e) e.preventDefault();
     const name = createPresetNamingValue.trim();
     if (!name) { showMsg("请输入预设名称。"); return; }
+
+    if (!forceOverwriteId) {
+      const conflict = expectationPresets.find((p) => p.name === name);
+      if (conflict) {
+        setCreatePresetConflictId(conflict.presetId);
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       const items = chainToExpectationItems(createExpStats, createExpOps);
-      const result = await saveExpectationPreset({ name, items });
+      const result = await saveExpectationPreset({ presetId: forceOverwriteId, name, items });
       await refreshExpectationPresets();
       setCreatePresetId(result.presetId);
       setCreatePresetNamingOpen(false);
       setCreatePresetSelectorOpen(false);
+      setCreatePresetConflictId(null);
       showMsg(`已设为预设「${name}」。`, "success");
     } catch (err) {
       showMsg(String(err), "error");
@@ -940,13 +952,38 @@ export function RecordPage() {
           }}
           onSubmit={(e) => { void handleSaveCreatePreset(e); }}
         >
-          <input
-            ref={createPresetNamingInputRef}
-            value={createPresetNamingValue}
-            onChange={(e) => setCreatePresetNamingValue(e.target.value)}
-            placeholder="输入预设名称"
-          />
-          <button type="submit" disabled={saving}>确定</button>
+          {createPresetConflictId ? (
+            <div className="preset-conflict-alert">
+              <span>已存在同名预设「{createPresetNamingValue.trim()}」，是否覆盖？</span>
+              <div className="preset-conflict-actions">
+                <button type="button" disabled={saving} onClick={() => {
+                  setCreatePresetNamingOpen(false);
+                  setCreatePresetConflictId(null);
+                }}>取消</button>
+                <button type="button" disabled={saving} onClick={() => {
+                  setCreatePresetConflictId(null);
+                  requestAnimationFrame(() => {
+                    const input = createPresetNamingInputRef.current;
+                    if (input) {
+                      input.focus();
+                      input.select();
+                    }
+                  });
+                }}>重命名</button>
+                <button type="button" disabled={saving} className="btn-danger" onClick={() => void handleSaveCreatePreset(undefined, createPresetConflictId)}>确定</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <input
+                ref={createPresetNamingInputRef}
+                value={createPresetNamingValue}
+                onChange={(e) => setCreatePresetNamingValue(e.target.value)}
+                placeholder="输入预设名称"
+              />
+              <button type="submit" disabled={saving}>确定</button>
+            </>
+          )}
         </form>
       ) : null}
 
