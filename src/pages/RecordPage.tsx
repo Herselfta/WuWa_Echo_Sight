@@ -1084,71 +1084,7 @@ export function RecordPage() {
             ) : null}
           </div>
 
-          {/* 当前声骸信息 */}
-          {selectedEcho ? (
-            <div className="card record-card record-echo-info">
-              <div className="record-echo-info-header">
-                <span className="record-echo-name">
-                  {selectedEcho.nickname ?? selectedEcho.echoId.slice(0, 8)}
-                </span>
-                <span className={`record-badge ${STATUS_BADGE_CLASS[selectedEcho.status]}`}>
-                  {STATUS_LABELS[selectedEcho.status]}
-                </span>
-                <span className="record-badge badge-neutral">
-                  Cost {selectedEcho.costClass}
-                </span>
-                <span className="record-badge badge-neutral">
-                  {statMap.get(selectedEcho.mainStatKey)?.displayName ?? selectedEcho.mainStatKey}
-                </span>
-              </div>
-              <div className="record-echo-slots">
-                <span className="record-echo-slots-label">
-                  词条 {selectedEcho.openedSlotsCount}/5
-                </span>
-                {selectedEcho.currentSubstats.length === 0 ? (
-                  <span className="chain-empty">暂无词条</span>
-                ) : (
-                  [...selectedEcho.currentSubstats]
-                    .sort((a, b) => a.slotNo - b.slotNo)
-                    .map((slot) => {
-                      const st = statMap.get(slot.statKey);
-                      return (
-                        <span
-                          key={slot.slotNo}
-                          className={`slot-pill ${slot.source === "ordered_event" ? "slot-pill-locked" : ""}`}
-                          title={`${st?.displayName ?? slot.statKey} 档${slot.tierIndex}：${formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}`}
-                        >
-                          {slot.slotNo}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}
-                        </span>
-                      );
-                    })
-                )}
-              </div>
-              {selectedEcho.expectations.length > 0 ? (
-                <div className="record-echo-exp">
-                  <span className="chain-label">期望：</span>
-                  {[...selectedEcho.expectations]
-                    .sort((a, b) => a.rank - b.rank || a.statKey.localeCompare(b.statKey))
-                    .map((exp, idx, arr) => (
-                      <Fragment key={idx}>
-                        {idx > 0 ? (
-                          <span className="record-exp-op">
-                            {arr[idx].rank === arr[idx - 1].rank ? "=" : ">"}
-                          </span>
-                        ) : null}
-                        <span className="record-exp-tag">
-                          {statMap.get(exp.statKey)?.displayName ?? exp.statKey}
-                        </span>
-                      </Fragment>
-                    ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-
-        {/* ── 右：强化录入 ── */}
-        <div className="record-col-event">
+          {/* 统一面板的强化录入被移动至此 */}
           <form className="card record-card record-event-form" onSubmit={handleRecordEvent}>
             <span className="record-section-title">强化录入</span>
 
@@ -1177,6 +1113,77 @@ export function RecordPage() {
                 ) : null}
               </select>
             </label>
+
+            {/* 当前声骸详情 (内联) */}
+            {selectedEcho ? (
+              <div
+                className="record-echo-info"
+                style={{
+                  padding: "8px 10px",
+                  background: "var(--bg-app, #f8fafc)",
+                  borderRadius: "6px",
+                  marginTop: "4px",
+                  marginBottom: "4px",
+                }}
+              >
+                <div className="record-echo-info-header" style={{ marginBottom: "4px" }}>
+                  <span className="record-echo-name">
+                    {selectedEcho.nickname ?? selectedEcho.echoId.slice(0, 8)}
+                  </span>
+                  <span className={`record-badge ${STATUS_BADGE_CLASS[selectedEcho.status]}`}>
+                    {STATUS_LABELS[selectedEcho.status]}
+                  </span>
+                  <span className="record-badge badge-neutral">
+                    Cost {selectedEcho.costClass}
+                  </span>
+                  <span className="record-badge badge-neutral">
+                    {statMap.get(selectedEcho.mainStatKey)?.displayName ?? selectedEcho.mainStatKey}
+                  </span>
+                </div>
+                <div className="record-echo-slots" style={{ marginBottom: selectedEcho.expectations.length > 0 ? "4px" : "0" }}>
+                  <span className="record-echo-slots-label">
+                    词条 {selectedEcho.openedSlotsCount}/5
+                  </span>
+                  {selectedEcho.currentSubstats.length === 0 ? (
+                    <span className="chain-empty">暂无词条</span>
+                  ) : (
+                    [...selectedEcho.currentSubstats]
+                      .sort((a, b) => a.slotNo - b.slotNo)
+                      .map((slot) => {
+                        const st = statMap.get(slot.statKey);
+                        return (
+                          <span
+                            key={slot.slotNo}
+                            className={`slot-pill ${slot.source === "ordered_event" ? "slot-pill-locked" : ""}`}
+                            title={`${st?.displayName ?? slot.statKey} 档${slot.tierIndex}：${formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}`}
+                          >
+                            {slot.slotNo}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}
+                          </span>
+                        );
+                      })
+                  )}
+                </div>
+                {selectedEcho.expectations.length > 0 ? (
+                  <div className="record-echo-exp">
+                    <span className="chain-label">期望：</span>
+                    {[...selectedEcho.expectations]
+                      .sort((a, b) => a.rank - b.rank || a.statKey.localeCompare(b.statKey))
+                      .map((exp, idx, arr) => (
+                        <Fragment key={idx}>
+                          {idx > 0 ? (
+                            <span className="record-exp-op">
+                              {arr[idx].rank === arr[idx - 1].rank ? "=" : ">"}
+                            </span>
+                          ) : null}
+                          <span className="record-exp-tag">
+                            {statMap.get(exp.statKey)?.displayName ?? exp.statKey}
+                          </span>
+                        </Fragment>
+                      ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* 录入字段 - 紧凑布局 */}
             <div className="record-event-fields">
@@ -1236,6 +1243,13 @@ export function RecordPage() {
               </button>
             </div>
           </form>
+        </div>
+
+        {/* ── 右：最近录入 ── */}
+        <div className="record-col-event">
+
+        {/* ── 右：强化录入 ── */}
+
 
           {/* 最近事件 */}
           <div className="card record-card record-history-card">

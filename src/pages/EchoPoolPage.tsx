@@ -1793,7 +1793,7 @@ export function EchoPoolPage() {
   };
 
   return (
-    <section className="page">
+    <section className="page echo-pool-page">
       {toast ? <div className={`toast toast-${toast.kind}`}>{toast.text}</div> : null}
       {dragState ? (
         <div className="drag-ghost" style={{ left: dragState.x + 12, top: dragState.y + 12 }}>
