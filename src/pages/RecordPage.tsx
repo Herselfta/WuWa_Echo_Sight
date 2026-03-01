@@ -822,41 +822,37 @@ export function RecordPage() {
                 }}
                 title="长按拖动，点击编辑，右键删除"
               >
+                <span className="slot-label">S{idx + 1}</span>
                 {selected ? (
-                  <>
-                    <span className="slot-label">S{idx + 1}</span>
-                    <div className="inline-row" onPointerDown={e => e.stopPropagation()}>
-                      <select
-                        value={slot.statKey}
-                        onChange={(e) => {
-                          const nk = e.target.value;
-                          const nt = statMap.get(nk)?.tiers[0]?.tierIndex ?? 1;
-                          setSlots((prev) => prev.map((item, i) => (i === idx ? { statKey: nk, tierIndex: nt } : item)));
-                        }}
-                      >
-                        {availStats.map((s) => (
-                          <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
-                        ))}
-                      </select>
-                      <select
-                        value={slot.tierIndex}
-                        onChange={(e) => {
-                          const nt = Number(e.target.value);
-                          setSlots((prev) => prev.map((item, i) => (i === idx ? { ...item, tierIndex: nt } : item)));
-                        }}
-                      >
-                        {tiers.map((t) => (
-                          <option key={t.tierIndex} value={t.tierIndex}>
-                            档{t.tierIndex}: {formatScaledValue(stat?.unit ?? "flat", t.valueScaled)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
+                  <div className="inline-row" onPointerDown={e => e.stopPropagation()}>
+                    <select
+                      value={slot.statKey}
+                      onChange={(e) => {
+                        const nk = e.target.value;
+                        const nt = statMap.get(nk)?.tiers[0]?.tierIndex ?? 1;
+                        setSlots((prev) => prev.map((item, i) => (i === idx ? { statKey: nk, tierIndex: nt } : item)));
+                      }}
+                    >
+                      {availStats.map((s) => (
+                        <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={slot.tierIndex}
+                      onChange={(e) => {
+                        const nt = Number(e.target.value);
+                        setSlots((prev) => prev.map((item, i) => (i === idx ? { ...item, tierIndex: nt } : item)));
+                      }}
+                    >
+                      {tiers.map((t) => (
+                        <option key={t.tierIndex} value={t.tierIndex}>
+                          档{t.tierIndex}: {formatScaledValue(stat?.unit ?? "flat", t.valueScaled)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 ) : (
-                  <span>
-                    {idx + 1}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(stat?.unit ?? "flat", stat?.tiers.find((t) => t.tierIndex === slot.tierIndex)?.valueScaled ?? 0)}
-                  </span>
+                  <span>{stat?.displayName ?? slot.statKey} / 档{slot.tierIndex}</span>
                 )}
               </div>
             </div>
