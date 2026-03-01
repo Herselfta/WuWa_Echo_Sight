@@ -626,7 +626,7 @@ export function EchoPoolPage() {
   }, []);
 
   useChainSelectionDismiss({
-    chainScopeSelector: ".chain-block, .chain-row, .chain-item, .chain-op, .chain-add, .preset-selector",
+    chainScopeSelector: ".chain-item, .chain-op",
     onDismiss: dismissChainSelection,
     onPointerDown: handleChainPointerDown,
   });

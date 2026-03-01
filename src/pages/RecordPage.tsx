@@ -356,7 +356,7 @@ export function RecordPage() {
   }, []);
 
   useChainSelectionDismiss({
-    chainScopeSelector: ".record-chain-section, .chain-row, .chain-item, .chain-op, .chain-add, .record-preset-inline",
+    chainScopeSelector: ".chain-item, .chain-op",
     onDismiss: dismissChainSelection,
     onPointerDown: handleChainPointerDown,
   });
