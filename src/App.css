@@ -25,6 +25,14 @@ body {
 body.is-dragging-chain {
   cursor: grabbing;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body.is-dragging-chain * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none;
 }
 
 .app-shell {
@@ -465,6 +473,9 @@ button:hover {
   cursor: pointer;
   flex: 0 0 auto;
   transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .chain-item.active {
@@ -493,6 +504,8 @@ button:hover {
   height: 20px;
   font-size: 12px;
   padding: 0 4px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .drag-insert-line {
@@ -527,13 +540,6 @@ button:hover {
 @keyframes ghost-pop {
   0% { transform: translate(-50%, -50%) scale(0.9); opacity: 0; }
   100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-}
-
-.drag-ghost-icon {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
-    monospace;
-  color: var(--muted);
-  font-size: 11px;
 }
 
 .chain-op {

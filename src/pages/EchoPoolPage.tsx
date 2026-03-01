@@ -101,6 +101,7 @@ const ECHO_SORT_OPTIONS: Array<{ value: EchoSortBy; label: string }> = [
   { value: "nickname_asc", label: "名称（A-Z）" },
   { value: "nickname_desc", label: "名称（Z-A）" },
 ];
+const CHAIN_LONG_PRESS_MS = 150;
 
 function sanitizeEchoSortBy(input: unknown): EchoSortBy {
   return ECHO_SORT_OPTIONS.some((option) => option.value === input) ? (input as EchoSortBy) : "created_desc";
@@ -823,6 +824,9 @@ export function EchoPoolPage() {
         return;
       }
 
+      event.preventDefault();
+      clearNativeTextSelection();
+
       if (event.buttons === 0) {
         finishDragging(true);
         return;
@@ -870,17 +874,21 @@ export function EchoPoolPage() {
       if (!current || current.pointerId !== event.pointerId) {
         return;
       }
+      clearNativeTextSelection();
       finishDragging(true);
     };
 
+    const handleSelectStart = (event: Event) => event.preventDefault();
     const handleBlur = () => finishDragging(false);
 
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
+    document.addEventListener("selectstart", handleSelectStart);
     window.addEventListener("blur", handleBlur);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
+      document.removeEventListener("selectstart", handleSelectStart);
       window.removeEventListener("blur", handleBlur);
     };
   }, [dragState?.pointerId, expectationStats.length, slotsDraft.length, presetDraftStats.length]);
@@ -1865,7 +1873,6 @@ export function EchoPoolPage() {
       {toast ? <div className={`toast toast-${toast.kind}`}>{toast.text}</div> : null}
       {dragState ? (
         <div className="drag-ghost" style={{ left: dragState.x + 12, top: dragState.y + 12 }}>
-          <span className="drag-ghost-icon">::</span>
           <span>{dragState.label}</span>
         </div>
       ) : null}
@@ -2494,9 +2501,12 @@ export function EchoPoolPage() {
                                         data-drag-kind="expectation"
                                         data-drag-index={idx}
                                         onPointerDown={(e) => {
-                                          if ((e.target as HTMLElement).tagName === "SELECT") return;
+                                          if (e.button !== 0 || (e.target as HTMLElement).tagName === "SELECT") return;
+                                          e.preventDefault();
+                                          clearNativeTextSelection();
                                           startPosRef.current = { x: e.clientX, y: e.clientY };
                                           longPressTimerRef.current = setTimeout(() => {
+                                            clearNativeTextSelection();
                                             setDragState({
                                               kind: "expectation",
                                               fromIndex: idx,
@@ -2507,16 +2517,24 @@ export function EchoPoolPage() {
                                               label: stat?.displayName ?? statKey,
                                             });
                                             longPressTimerRef.current = null;
-                                          }, 300);
+                                          }, CHAIN_LONG_PRESS_MS);
                                         }}
                                         onPointerMove={(e) => {
                                           if (longPressTimerRef.current) {
+                                            e.preventDefault();
+                                            clearNativeTextSelection();
                                             const dx = e.clientX - startPosRef.current.x;
                                             const dy = e.clientY - startPosRef.current.y;
                                             if (Math.hypot(dx, dy) > 8) {
                                               clearTimeout(longPressTimerRef.current);
                                               longPressTimerRef.current = null;
                                             }
+                                          }
+                                        }}
+                                        onPointerCancel={() => {
+                                          if (longPressTimerRef.current) {
+                                            clearTimeout(longPressTimerRef.current);
+                                            longPressTimerRef.current = null;
                                           }
                                         }}
                                         onPointerUp={() => {
@@ -2648,9 +2666,12 @@ export function EchoPoolPage() {
                                       data-drag-kind="slot"
                                       data-drag-index={idx}
                                       onPointerDown={(e) => {
-                                        if ((e.target as HTMLElement).tagName === "SELECT") return;
+                                        if (e.button !== 0 || (e.target as HTMLElement).tagName === "SELECT") return;
+                                        e.preventDefault();
+                                        clearNativeTextSelection();
                                         startPosRef.current = { x: e.clientX, y: e.clientY };
                                         longPressTimerRef.current = setTimeout(() => {
+                                          clearNativeTextSelection();
                                           setDragState({
                                             kind: "slot",
                                             fromIndex: idx,
@@ -2661,16 +2682,24 @@ export function EchoPoolPage() {
                                             label: `S${previewSlotNo} ${statKeyToAbbr(slot.statKey)}${slot.tierIndex}`,
                                           });
                                           longPressTimerRef.current = null;
-                                        }, 300);
+                                        }, CHAIN_LONG_PRESS_MS);
                                       }}
                                       onPointerMove={(e) => {
                                         if (longPressTimerRef.current) {
+                                          e.preventDefault();
+                                          clearNativeTextSelection();
                                           const dx = e.clientX - startPosRef.current.x;
                                           const dy = e.clientY - startPosRef.current.y;
                                           if (Math.hypot(dx, dy) > 8) {
                                             clearTimeout(longPressTimerRef.current);
                                             longPressTimerRef.current = null;
                                           }
+                                        }
+                                      }}
+                                      onPointerCancel={() => {
+                                        if (longPressTimerRef.current) {
+                                          clearTimeout(longPressTimerRef.current);
+                                          longPressTimerRef.current = null;
                                         }
                                       }}
                                       onPointerUp={() => {
