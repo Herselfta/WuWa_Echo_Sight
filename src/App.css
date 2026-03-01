@@ -1625,7 +1625,7 @@ button:hover {
 
 .record-history-item {
   display: grid;
-  grid-template-columns: minmax(60px, auto) 1fr auto auto;
+  grid-template-columns: auto minmax(60px, auto) 1fr auto;
   gap: 6px;
   align-items: center;
   padding: 5px 8px;
@@ -1689,7 +1689,7 @@ button:hover {
 .record-history-abbr-green { background: #569d79; }
 .record-history-abbr-red { background: #da6362; }
 .record-history-abbr-orange { background: #d77f48; }
-.record-history-abbr-blue { background: #5a93a2; }
+.record-history-abbr-blue { background: #9e5aa7; }
 
 .record-history-time {
   color: var(--muted);

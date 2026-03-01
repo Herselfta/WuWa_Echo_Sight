@@ -1253,12 +1253,6 @@ export function RecordPage() {
                     onClick={() => setSelectedEchoId(row.echoId)}
                     title={`点击切换到此声骸 · ${row.eventId}`}
                   >
-                    <span className="record-history-echo">
-                      {row.echoNickname ?? row.echoId.slice(0, 8)}
-                    </span>
-                    <span className="record-history-detail">
-                      S{row.slotNo} · {st?.displayName ?? row.statKey}={formatScaledValue(st?.unit ?? "", row.valueScaled)}
-                    </span>
                     <span className="record-history-abbr-group">
                       <span className={`record-history-abbr-part ${getStatColorClass(row.statKey)}`}>
                         {statKeyToAbbr(row.statKey)}
@@ -1266,6 +1260,12 @@ export function RecordPage() {
                       <span className="record-history-abbr-part abbr-tier">
                         {row.tierIndex}
                       </span>
+                    </span>
+                    <span className="record-history-echo">
+                      {row.echoNickname ?? row.echoId.slice(0, 8)}
+                    </span>
+                    <span className="record-history-detail">
+                      S{row.slotNo} · {st?.displayName ?? row.statKey}={formatScaledValue(st?.unit ?? "", row.valueScaled)}
                     </span>
                     <span className="record-history-time">
                       {new Date(row.eventTime).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
