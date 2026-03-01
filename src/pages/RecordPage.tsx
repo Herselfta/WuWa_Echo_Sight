@@ -1190,23 +1190,39 @@ export function RecordPage() {
                     <span className="record-echo-slots-label">
                       词条 {selectedEcho.openedSlotsCount}/5
                     </span>
-                    {selectedEcho.currentSubstats.length === 0 ? (
+                    {selectedEcho.currentSubstats.length === 0 && (!selectedStat || availableSlots.length === 0) ? (
                       <span className="chain-empty">暂无词条</span>
                     ) : (
-                      [...selectedEcho.currentSubstats]
-                        .sort((a, b) => a.slotNo - b.slotNo)
-                        .map((slot) => {
-                          const st = statMap.get(slot.statKey);
-                          return (
-                            <span
-                              key={slot.slotNo}
-                              className={`slot-pill ${slot.source === "ordered_event" ? "slot-pill-locked" : ""}`}
-                              title={`${st?.displayName ?? slot.statKey} 档${slot.tierIndex}：${formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}`}
-                            >
-                              {slot.slotNo}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}
-                            </span>
-                          );
-                        })
+                      <>
+                        {[...selectedEcho.currentSubstats]
+                          .sort((a, b) => a.slotNo - b.slotNo)
+                          .map((slot) => {
+                            const st = statMap.get(slot.statKey);
+                            return (
+                              <span
+                                key={slot.slotNo}
+                                className={`slot-pill ${slot.source === "ordered_event" ? "slot-pill-locked" : ""}`}
+                                title={`${st?.displayName ?? slot.statKey} 档${slot.tierIndex}：${formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}`}
+                              >
+                                {slot.slotNo}: {statKeyToAbbr(slot.statKey)}{slot.tierIndex}={formatScaledValue(st?.unit ?? "flat", slot.valueScaled)}
+                              </span>
+                            );
+                          })}
+                        {selectedStat && availableSlots.length > 0 ? (
+                          <span
+                            className="slot-pill"
+                            style={{
+                              borderColor: "#10b981",
+                              color: "#059669",
+                              backgroundColor: "#ecfdf5",
+                              borderStyle: "dashed"
+                            }}
+                            title={`预览：${selectedStat.displayName ?? selectedStat.statKey} 档${tierIndex}：${formatScaledValue(selectedStat.unit ?? "flat", selectedTierValue)}`}
+                          >
+                            {nextSlotNo}: {statKeyToAbbr(selectedStat.statKey)}{tierIndex}={formatScaledValue(selectedStat.unit ?? "flat", selectedTierValue)}
+                          </span>
+                        ) : null}
+                      </>
                     )}
                   </div>
                   {selectedEcho.expectations.length > 0 ? (
