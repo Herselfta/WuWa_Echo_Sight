@@ -70,6 +70,7 @@ interface EchoFilters {
   searchText: string;
   substatMode: SubstatFilterMode;
   substatStatKeys: string[];
+  substatTiers: Record<string, number>;
   sortBy: EchoSortBy;
 }
 
@@ -83,6 +84,7 @@ const DEFAULT_ECHO_FILTERS: EchoFilters = {
   searchText: "",
   substatMode: "or",
   substatStatKeys: [],
+  substatTiers: {},
   sortBy: "created_desc",
 };
 const ECHO_STATUS_OPTIONS: EchoStatus[] = ["tracking", "paused", "abandoned", "completed"];
@@ -126,6 +128,7 @@ function isDefaultEchoFilters(filters: EchoFilters): boolean {
     filters.searchText.trim() === DEFAULT_ECHO_FILTERS.searchText &&
     filters.substatMode === DEFAULT_ECHO_FILTERS.substatMode &&
     filters.substatStatKeys.length === 0 &&
+    Object.keys(filters.substatTiers).length === 0 &&
     filters.sortBy === DEFAULT_ECHO_FILTERS.sortBy
   );
 }
@@ -168,6 +171,14 @@ function parseEchoFilters(raw: string | null): EchoFilters {
           ),
         )
       : [];
+    const substatTiers: Record<string, number> = {};
+    if (typeof parsed.substatTiers === "object" && parsed.substatTiers !== null) {
+      for (const [key, val] of Object.entries(parsed.substatTiers)) {
+        if (typeof val === "number") {
+          substatTiers[key] = val;
+        }
+      }
+    }
     const sortBy = sanitizeEchoSortBy(parsed.sortBy);
     return {
       costClass,
@@ -178,6 +189,7 @@ function parseEchoFilters(raw: string | null): EchoFilters {
       searchText,
       substatMode,
       substatStatKeys,
+      substatTiers,
       sortBy,
     };
   } catch {
@@ -289,7 +301,7 @@ function formatScaledValue(unit: string, valueScaled: number) {
 }
 
 export function EchoPoolPage() {
-  const { statDefs, echoes, expectationPresets, refreshEchoes, refreshExpectationPresets } = useAppStore();
+  const { statDefs, echoes, expectationPresets, refreshEchoes, refreshExpectationPresets, selectedEchoId, setSelectedEchoId } = useAppStore();
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const presetSelectorRef = useRef<HTMLDivElement | null>(null);
   const presetSelectorButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -403,16 +415,23 @@ export function EchoPoolPage() {
           }
         }
         if (requiredSubstats.length > 0) {
-          const currentSubstats = new Set(echo.currentSubstats.map((slot) => slot.statKey));
+          const checkSubstat = (statKey: string) => {
+            const slot = echo.currentSubstats.find((s) => s.statKey === statKey);
+            if (!slot) return false;
+            const minTier = echoFilters.substatTiers[statKey];
+            if (minTier && slot.tierIndex < minTier) return false;
+            return true;
+          };
+
           if (echoFilters.substatMode === "and") {
-            if (!requiredSubstats.every((statKey) => currentSubstats.has(statKey))) {
+            if (!requiredSubstats.every(checkSubstat)) {
               return false;
             }
           } else if (echoFilters.substatMode === "or") {
-            if (!requiredSubstats.some((statKey) => currentSubstats.has(statKey))) {
+            if (!requiredSubstats.some(checkSubstat)) {
               return false;
             }
-          } else if (requiredSubstats.some((statKey) => currentSubstats.has(statKey))) {
+          } else if (requiredSubstats.some(checkSubstat)) {
             return false;
           }
         }
@@ -738,9 +757,9 @@ export function EchoPoolPage() {
   const columnWidths = useMemo(() => {
     const total = Math.max(tableClientWidth, 1);
     const select = 40;
-    const actions = total >= 760 ? 270 : Math.max(210, Math.floor(total * 0.32));
+    const actions = total >= 760 ? 300 : Math.max(210, Math.floor(total * 0.38));
     const remaining = Math.max(total - actions - select, 0);
-    const nickname = Math.floor((remaining * 3) / 10);
+    const nickname = Math.floor((remaining * 2) / 10);
     const main = Math.floor(remaining / 10);
     const cost = Math.floor(remaining / 10);
     const status = Math.floor(remaining / 10);
@@ -2038,7 +2057,7 @@ export function EchoPoolPage() {
                     <span className="hint">单击词条可选择/取消</span>
                     <button
                       type="button"
-                      onClick={() => setEchoFilters((prev) => ({ ...prev, substatStatKeys: [] }))}
+                      onClick={() => setEchoFilters((prev) => ({ ...prev, substatStatKeys: [], substatTiers: {} }))}
                       disabled={echoFilters.substatStatKeys.length === 0}
                     >
                       清空
@@ -2048,21 +2067,60 @@ export function EchoPoolPage() {
                     {statDefs.map((stat) => {
                       const selected = echoFilters.substatStatKeys.includes(stat.statKey);
                       return (
-                        <button
+                        <div
                           key={stat.statKey}
-                          type="button"
-                          className={selected ? "echo-substat-chip active" : "echo-substat-chip"}
-                          onClick={() =>
-                            setEchoFilters((prev) => ({
-                              ...prev,
-                              substatStatKeys: selected
-                                ? prev.substatStatKeys.filter((statKey) => statKey !== stat.statKey)
-                                : [...prev.substatStatKeys, stat.statKey],
-                            }))
-                          }
+                          style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}
                         >
-                          {stat.displayName}
-                        </button>
+                          <button
+                            type="button"
+                            className={selected ? "echo-substat-chip active" : "echo-substat-chip"}
+                            onClick={() =>
+                              setEchoFilters((prev) => {
+                                const nextTiers = { ...prev.substatTiers };
+                                if (selected) delete nextTiers[stat.statKey];
+                                return {
+                                  ...prev,
+                                  substatStatKeys: selected
+                                    ? prev.substatStatKeys.filter((statKey) => statKey !== stat.statKey)
+                                    : [...prev.substatStatKeys, stat.statKey],
+                                  substatTiers: nextTiers,
+                                };
+                              })
+                            }
+                          >
+                            {stat.displayName}
+                          </button>
+                          {selected ? (
+                            <select
+                              value={echoFilters.substatTiers[stat.statKey] || 1}
+                              onChange={(e) =>
+                                setEchoFilters((prev) => ({
+                                  ...prev,
+                                  substatTiers: {
+                                    ...prev.substatTiers,
+                                    [stat.statKey]: Number(e.target.value),
+                                  },
+                                }))
+                              }
+                              title="最低档位要求"
+                              style={{
+                                width: "auto",
+                                padding: "0 2px",
+                                fontSize: "11px",
+                                height: "24px",
+                                background: "var(--bg-app)",
+                                border: "1px solid var(--border)",
+                                borderRadius: "4px",
+                              }}
+                            >
+                              <option value={1}>1+</option>
+                              <option value={2}>2+</option>
+                              <option value={3}>3+</option>
+                              <option value={4}>4+</option>
+                              <option value={5}>5+</option>
+                            </select>
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>
@@ -2268,8 +2326,21 @@ export function EchoPoolPage() {
                       <div className="inline-row echo-actions-inline">
                         <button
                           type="button"
+                          className={selectedEchoId === echo.echoId ? "echo-action-btn manage-btn-active" : "echo-action-btn"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedEchoId(echo.echoId);
+                          }}
+                          disabled={saving}
+                          title={selectedEchoId === echo.echoId ? "当前已选中此声骸" : "将此声骸设为记录板与分析目标"}
+                        >
+                          选中
+                        </button>
+                        <button
+                          type="button"
                           className={editing ? "echo-action-btn manage-btn-active" : "echo-action-btn"}
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation();
                             if (editing) {
                               return;
                             }
