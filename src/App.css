@@ -502,18 +502,19 @@ button:hover {
 
 .chain-item span {
   font-size: 13px;
-  line-height: 1.2;
+  line-height: normal;
+  display: inline-flex;
+  align-items: center;
 }
 
 .chain-item select {
   min-width: 80px;
-  height: 22px;
-  min-height: 22px;
   font-size: 12px;
-  padding: 0 4px;
-  line-height: 1.2;
+  padding: 2px 4px;
+  line-height: normal;
   user-select: text;
   -webkit-user-select: text;
+  display: block;
 }
 
 .drag-insert-line {
