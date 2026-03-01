@@ -449,6 +449,8 @@ button:hover {
   flex-wrap: nowrap;
   gap: 4px;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
   padding-bottom: 2px;
   font-size: 12px;
 }
@@ -465,7 +467,7 @@ button:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 24px;
+  min-height: 28px;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 1px 6px;
@@ -497,13 +499,16 @@ button:hover {
 
 .chain-item span {
   font-size: 13px;
+  line-height: 1.2;
 }
 
 .chain-item select {
   min-width: 80px;
-  height: 20px;
+  height: 22px;
+  min-height: 22px;
   font-size: 12px;
   padding: 0 4px;
+  line-height: 1.2;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -1441,15 +1446,6 @@ button:hover {
   border-color: #fca5a5;
 }
 
-.slot-inline-edit {
-  gap: 4px;
-  flex-wrap: nowrap;
-}
-
-.slot-inline-edit select {
-  min-width: 90px;
-}
-
 /* ── echo info card ───── */
 
 .record-echo-info {
@@ -1703,6 +1699,16 @@ button:hover {
   min-height: unset;
   padding: 2px 6px;
   font-size: 12px;
+}
+
+/* Keep chain token height stable across pages, unaffected by RecordPage compact form controls */
+.record-page .chain-item select,
+.echo-pool-page .chain-item select {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .record-filter-field input,

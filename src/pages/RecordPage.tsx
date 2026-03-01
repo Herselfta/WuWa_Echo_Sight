@@ -728,7 +728,6 @@ export function RecordPage() {
                       const v = e.target.value;
                       setStats((prev) => prev.map((item, i) => (i === idx ? v : item)));
                     }}
-                    onClick={(e) => e.stopPropagation()}
                     onPointerDown={(e) => e.stopPropagation()}
                   >
                     {availStats.map((s) => (
@@ -825,7 +824,7 @@ export function RecordPage() {
               >
                 <span className="slot-label">S{idx + 1}</span>
                 {selected ? (
-                  <div className="inline-row slot-inline-edit" onPointerDown={e => e.stopPropagation()}>
+                  <div className="inline-row" onPointerDown={e => e.stopPropagation()}>
                     <select
                       value={slot.statKey}
                       onChange={(e) => {
@@ -833,7 +832,6 @@ export function RecordPage() {
                         const nt = statMap.get(nk)?.tiers[0]?.tierIndex ?? 1;
                         setSlots((prev) => prev.map((item, i) => (i === idx ? { statKey: nk, tierIndex: nt } : item)));
                       }}
-                      onClick={(e) => e.stopPropagation()}
                     >
                       {availStats.map((s) => (
                         <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
@@ -845,7 +843,6 @@ export function RecordPage() {
                         const nt = Number(e.target.value);
                         setSlots((prev) => prev.map((item, i) => (i === idx ? { ...item, tierIndex: nt } : item)));
                       }}
-                      onClick={(e) => e.stopPropagation()}
                     >
                       {tiers.map((t) => (
                         <option key={t.tierIndex} value={t.tierIndex}>
