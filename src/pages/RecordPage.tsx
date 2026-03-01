@@ -826,11 +826,6 @@ export function RecordPage() {
                 ) : (
                   <span>{stat?.displayName ?? sk}</span>
                 )}
-                <button
-                  type="button" className="chain-remove-btn"
-                  onClick={(e) => { e.stopPropagation(); removeFn(idx); }}
-                  title="删除"
-                >×</button>
               </div>
               {idx < ops.length && !hideOperator ? (
                 <button
@@ -941,11 +936,6 @@ export function RecordPage() {
                 ) : (
                   <span>{stat?.displayName ?? slot.statKey} / 档{slot.tierIndex}</span>
                 )}
-                <button
-                  type="button" className="chain-remove-btn"
-                  onClick={(e) => { e.stopPropagation(); removeFn(idx); }}
-                  title="删除"
-                >×</button>
               </div>
             </div>
           </Fragment>
