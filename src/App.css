@@ -1192,13 +1192,17 @@ button:hover {
   display: grid;
   gap: 10px;
   grid-template-columns: minmax(360px, 1fr) minmax(340px, 1fr);
-  align-items: start;
+  align-items: stretch;
 }
 
-.record-col-create,
-.record-col-event {
-  display: grid;
+.record-col-create {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+}
+
+.record-col-event {
+  position: relative;
 }
 
 .record-card {
@@ -1540,14 +1544,23 @@ button:hover {
 /* ── history list ───── */
 
 .record-history-card {
-  display: grid;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
+  margin: 0;
 }
 
 .record-history-list {
-  max-height: 280px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
 }
 
@@ -1733,6 +1746,15 @@ button:hover {
 @media (max-width: 900px) {
   .record-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .record-col-event {
+    position: static;
+  }
+
+  .record-history-card {
+    position: relative;
+    height: 380px;
   }
 
   .record-analysis-grid {
