@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendOrderedEvent,
   createEcho,
@@ -23,6 +23,7 @@ import {
   useChainDragSession,
   type ChainDragState,
 } from "../hooks/useChainDrag";
+import { useChainSelectionDismiss } from "../hooks/useChainSelectionDismiss";
 import { useAppStore } from "../store/useAppStore";
 import type {
   DistributionFilter,
@@ -343,24 +344,22 @@ export function RecordPage() {
     };
   }, [createPresetNamingOpen]);
 
-  // click-outside-to-dismiss for ephemeral toggle states
-  useEffect(() => {
-    const handler = (e: PointerEvent) => {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      // chain items: deselect active expectation / slot index
-      if (!target.closest(".chain-item") && !target.closest(".chain-op")) {
-        setCreateActiveExpIdx(null);
-        setCreateActiveSlotIdx(null);
-      }
-      // undo confirm: dismiss unless clicking the undo button itself
-      if (!target.closest(".record-undo-btn")) {
-        setUndoConfirmId(null);
-      }
-    };
-    window.addEventListener("pointerdown", handler);
-    return () => window.removeEventListener("pointerdown", handler);
+  const dismissChainSelection = useCallback(() => {
+    setCreateActiveExpIdx(null);
+    setCreateActiveSlotIdx(null);
   }, []);
+
+  const handleChainPointerDown = useCallback((target: Element) => {
+    if (!target.closest(".record-undo-btn")) {
+      setUndoConfirmId(null);
+    }
+  }, []);
+
+  useChainSelectionDismiss({
+    chainScopeSelector: ".record-chain-section, .chain-row, .chain-item, .chain-op, .chain-add, .record-preset-inline",
+    onDismiss: dismissChainSelection,
+    onPointerDown: handleChainPointerDown,
+  });
 
   useChainDragSession<DragKind, DragState>({
     dragState,

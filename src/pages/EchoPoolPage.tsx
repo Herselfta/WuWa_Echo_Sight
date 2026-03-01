@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   deleteEcho,
   deleteExpectationPreset,
@@ -20,6 +20,7 @@ import {
   useChainDragSession,
   type ChainDragState,
 } from "../hooks/useChainDrag";
+import { useChainSelectionDismiss } from "../hooks/useChainSelectionDismiss";
 import { useAppStore } from "../store/useAppStore";
 import type { EchoStatus, ExpectationItem, ExpectationPreset } from "../types/domain";
 
@@ -610,28 +611,25 @@ export function EchoPoolPage() {
     return () => observer.disconnect();
   }, []);
 
-  // click-outside-to-dismiss for ephemeral toggle states
-  useEffect(() => {
-    const handler = (e: PointerEvent) => {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      // chain items: deselect active expectation / slot index
-      if (!target.closest(".chain-item") && !target.closest(".chain-op")) {
-        setActiveExpectationIndex(null);
-        setActiveSlotIndex(null);
-      }
-      // pending-delete echo: dismiss unless clicking the same delete button
-      if (!target.closest(".echo-action-btn")) {
-        setPendingDeleteEchoId(null);
-      }
-      // pending-delete preset: dismiss unless clicking the preset action button
-      if (!target.closest(".preset-action-btn")) {
-        setPendingDeletePresetId(null);
-      }
-    };
-    window.addEventListener("pointerdown", handler);
-    return () => window.removeEventListener("pointerdown", handler);
+  const dismissChainSelection = useCallback(() => {
+    setActiveExpectationIndex(null);
+    setActiveSlotIndex(null);
   }, []);
+
+  const handleChainPointerDown = useCallback((target: Element) => {
+    if (!target.closest(".echo-action-btn")) {
+      setPendingDeleteEchoId(null);
+    }
+    if (!target.closest(".preset-action-btn")) {
+      setPendingDeletePresetId(null);
+    }
+  }, []);
+
+  useChainSelectionDismiss({
+    chainScopeSelector: ".chain-block, .chain-row, .chain-item, .chain-op, .chain-add, .preset-selector",
+    onDismiss: dismissChainSelection,
+    onPointerDown: handleChainPointerDown,
+  });
 
   useEffect(() => {
     if (!presetSelectorOpen && !presetNamingOpen) {
