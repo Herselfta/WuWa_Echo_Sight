@@ -69,7 +69,9 @@ pub fn parse_event_time(input: &str) -> Result<DateTime<chrono::FixedOffset>, St
 
 pub fn compute_game_day(event_time: &str, boundary_hour: i64) -> Result<String, String> {
     let dt = parse_event_time(event_time)?;
-    let adjusted = dt - chrono::Duration::hours(boundary_hour);
+    // Convert to Local time before applying day boundary arithmetic
+    let local_dt = dt.with_timezone(&Local);
+    let adjusted = local_dt - chrono::Duration::hours(boundary_hour);
     Ok(adjusted.format("%Y-%m-%d").to_string())
 }
 

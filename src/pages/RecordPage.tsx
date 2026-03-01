@@ -207,6 +207,11 @@ export function RecordPage() {
   const [tierIndex, setTierIndex] = useState<number>(1);
   const [eventTimeLocal, setEventTimeLocal] = useState<string>(toLocalInputValue(new Date()));
   const [eventHistory, setEventHistory] = useState<EventRow[]>([]);
+  
+  const { recordPageDraft, patchRecordPageDraft } = useAppStore();
+  const { historyLimitStr, historyTodayOnly } = recordPageDraft;
+  const setHistoryLimitStr = (val: string) => patchRecordPageDraft({ historyLimitStr: val });
+  const setHistoryTodayOnly = (val: boolean) => patchRecordPageDraft({ historyTodayOnly: val });
 
   /* === distribution / analysis === */
   const [distributionFilter, setDistributionFilter] = useState<DistributionFilter>({});
@@ -390,8 +395,11 @@ export function RecordPage() {
     },
   });
 
-  const loadHistory = async () => {
-    const rows = await getEventHistory({ limit: 100 });
+  const parsedHistoryLimit = parseInt(historyLimitStr, 10) || 20;
+
+  const loadHistory = async (limit = parsedHistoryLimit, todayOnly = historyTodayOnly) => {
+    const fetchLimit = todayOnly ? Math.max(200, limit * 3) : Math.max(100, limit);
+    const rows = await getEventHistory({ limit: fetchLimit });
     setEventHistory(rows);
   };
 
@@ -414,7 +422,10 @@ export function RecordPage() {
     } finally { setLoadingProb(false); }
   };
 
-  useEffect(() => { void loadHistory(); void loadDistribution(); }, []);
+  // mount fetching
+  useEffect(() => { void loadDistribution(); }, []);
+  // history fetching
+  useEffect(() => { void loadHistory(parsedHistoryLimit, historyTodayOnly); }, [parsedHistoryLimit, historyTodayOnly]);
 
   useEffect(() => { void loadDistribution(); setSelectedDistStatKey(null); setEchoProbRows([]); }, [
     distributionFilter.startTime, distributionFilter.endTime,
@@ -881,6 +892,22 @@ export function RecordPage() {
 
   /* ── main render ───────────────── */
 
+  const displayedHistory = useMemo(() => {
+    let list = eventHistory;
+    if (historyTodayOnly) {
+      const now = new Date();
+      // "Today" starts at 4:00 AM local time
+      const boundary = new Date(now);
+      boundary.setHours(4, 0, 0, 0);
+      // If it's currently before 4:00 AM, the boundary is yesterday's 4:00 AM
+      if (now < boundary) {
+        boundary.setDate(boundary.getDate() - 1);
+      }
+      list = list.filter((r) => new Date(r.eventTime) >= boundary);
+    }
+    return list.slice(0, parsedHistoryLimit);
+  }, [eventHistory, historyTodayOnly, parsedHistoryLimit]);
+
   return (
     <section className="page record-page">
       {/* Toast */}
@@ -1259,9 +1286,31 @@ export function RecordPage() {
 
           {/* 最近事件 */}
           <div className="card record-card record-history-card">
-            <span className="record-section-title">最近录入</span>
+            <div className="record-card-header" style={{ marginBottom: 12 }}>
+              <span className="record-section-title">最近录入</span>
+              <div className="inline-row" style={{ gap: 8, fontSize: 13, fontWeight: "normal" }}>
+                <label className="inline-row" style={{ gap: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={historyTodayOnly}
+                    onChange={(e) => setHistoryTodayOnly(e.target.checked)}
+                  />
+                  仅限今日
+                </label>
+                <label className="inline-row" style={{ gap: 4 }}>
+                  上限:
+                  <input
+                    type="number"
+                    style={{ width: 48 }}
+                    min={1}
+                    value={historyLimitStr}
+                    onChange={(e) => setHistoryLimitStr(e.target.value)}
+                  />
+                </label>
+              </div>
+            </div>
             <div className="record-history-list">
-              {eventHistory.slice(0, 20).map((row) => {
+              {displayedHistory.map((row) => {
                 const st = statDefs.find((s) => s.statKey === row.statKey);
                 return (
                   <div
@@ -1308,7 +1357,7 @@ export function RecordPage() {
               开始
               <input
                 type="datetime-local"
-                value={distributionFilter.startTime ? distributionFilter.startTime.slice(0, 16) : ""}
+                value={distributionFilter.startTime ? toLocalInputValue(new Date(distributionFilter.startTime)) : ""}
                 onChange={(e) =>
                   setDistributionFilter((prev) => ({
                     ...prev, startTime: e.target.value ? new Date(e.target.value).toISOString() : undefined,
@@ -1320,7 +1369,7 @@ export function RecordPage() {
               结束
               <input
                 type="datetime-local"
-                value={distributionFilter.endTime ? distributionFilter.endTime.slice(0, 16) : ""}
+                value={distributionFilter.endTime ? toLocalInputValue(new Date(distributionFilter.endTime)) : ""}
                 onChange={(e) =>
                   setDistributionFilter((prev) => ({
                     ...prev, endTime: e.target.value ? new Date(e.target.value).toISOString() : undefined,

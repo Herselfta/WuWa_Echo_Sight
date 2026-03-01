@@ -28,6 +28,11 @@ interface CreateFormDraft {
   slots: { statKey: string; tierIndex: number }[];
 }
 
+interface RecordPageDraft {
+  historyLimitStr: string;
+  historyTodayOnly: boolean;
+}
+
 interface AppState {
   statDefs: StatDef[];
   echoes: EchoSummary[];
@@ -40,7 +45,9 @@ interface AppState {
   loading: boolean;
   error: string | null;
   createFormDraft: CreateFormDraft;
+  recordPageDraft: RecordPageDraft;
   patchCreateForm: (patch: Partial<CreateFormDraft>) => void;
+  patchRecordPageDraft: (patch: Partial<RecordPageDraft>) => void;
   setDistributionFilter: (patch: Partial<DistributionFilter>) => void;
   setSelectedStatKey: (key: string | null) => void;
   setSelectedEchoId: (id: string) => void;
@@ -70,6 +77,10 @@ export const useAppStore = create<AppState>()(
     expOps: [],
     slots: [],
   },
+  recordPageDraft: {
+    historyLimitStr: "20",
+    historyTodayOnly: false,
+  },
   echoProbRows: [],
   distributionFilter: {},
   loading: false,
@@ -85,6 +96,7 @@ export const useAppStore = create<AppState>()(
   setSelectedStatKey: (key) => set({ selectedStatKey: key }),
   setSelectedEchoId: (id) => set({ selectedEchoId: id }),
   patchCreateForm: (patch) => set((state) => ({ createFormDraft: { ...state.createFormDraft, ...patch } })),
+  patchRecordPageDraft: (patch) => set((state) => ({ recordPageDraft: { ...state.recordPageDraft, ...patch } })),
   loadBootData: async () => {
     set({ loading: true, error: null });
     try {
@@ -150,13 +162,20 @@ export const useAppStore = create<AppState>()(
   },
 }), {
   name: "wuwa-app-store",
-  partialize: (state) => ({ createFormDraft: state.createFormDraft }),
+  partialize: (state) => ({ 
+    createFormDraft: state.createFormDraft,
+    recordPageDraft: state.recordPageDraft 
+  }),
   merge: (persistedState: any, currentState) => ({
     ...currentState,
     ...persistedState,
     createFormDraft: {
       ...currentState.createFormDraft,
       ...persistedState?.createFormDraft,
+    },
+    recordPageDraft: {
+      ...currentState.recordPageDraft,
+      ...persistedState?.recordPageDraft,
     },
   }),
 }));

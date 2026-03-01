@@ -6,6 +6,14 @@ function toPercent(x: number): string {
   return `${(x * 100).toFixed(2)}%`;
 }
 
+function toLocalInputValue(date: Date): string {
+  if (isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+}
+
 export function DistributionPage() {
   const {
     statDefs,
@@ -47,7 +55,7 @@ export function DistributionPage() {
           开始时间
           <input
             type="datetime-local"
-            value={distributionFilter.startTime ? distributionFilter.startTime.slice(0, 16) : ""}
+            value={distributionFilter.startTime ? toLocalInputValue(new Date(distributionFilter.startTime)) : ""}
             onChange={(e) =>
               setDistributionFilter({
                 startTime: e.target.value ? new Date(e.target.value).toISOString() : undefined,
@@ -59,7 +67,7 @@ export function DistributionPage() {
           结束时间
           <input
             type="datetime-local"
-            value={distributionFilter.endTime ? distributionFilter.endTime.slice(0, 16) : ""}
+            value={distributionFilter.endTime ? toLocalInputValue(new Date(distributionFilter.endTime)) : ""}
             onChange={(e) =>
               setDistributionFilter({
                 endTime: e.target.value ? new Date(e.target.value).toISOString() : undefined,
