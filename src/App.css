@@ -1625,7 +1625,7 @@ button:hover {
 
 .record-history-item {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(60px, auto) 1fr auto auto;
   gap: 6px;
   align-items: center;
   padding: 5px 8px;
@@ -1659,8 +1659,37 @@ button:hover {
   text-overflow: ellipsis;
   display: flex;
   align-items: center;
-  gap: 4px;
 }
+
+.record-history-abbr-group {
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  overflow: hidden;
+  height: 20px;
+}
+
+.record-history-abbr-part {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 11px;
+  color: #fff;
+  padding: 0 4px 1px 4px;
+  line-height: inherit;
+  min-width: 14px;
+}
+
+.abbr-tier {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.record-history-abbr-green { background: #569d79; }
+.record-history-abbr-red { background: #da6362; }
+.record-history-abbr-orange { background: #d77f48; }
+.record-history-abbr-blue { background: #5a93a2; }
 
 .record-history-time {
   color: var(--muted);

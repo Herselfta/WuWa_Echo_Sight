@@ -140,6 +140,14 @@ function statKeyToAbbr(statKey: string): string {
   return STAT_ABBR_MAP[statKey] ?? statKey;
 }
 
+function getStatColorClass(statKey: string): string {
+  if (["hp_pct", "hp_flat", "def_pct", "def_flat"].includes(statKey)) return "record-history-abbr-green";
+  if (["crit_rate", "crit_dmg"].includes(statKey)) return "record-history-abbr-red";
+  if (["energy_regen", "atk_pct"].includes(statKey)) return "record-history-abbr-orange";
+  if (["atk_flat", "basic_dmg", "heavy_dmg", "skill_dmg", "liberation_dmg"].includes(statKey)) return "record-history-abbr-blue";
+  return "record-history-abbr-blue"; // default
+}
+
 /* ── component ───────────────────────────────────── */
 
 export function RecordPage() {
@@ -1249,8 +1257,15 @@ export function RecordPage() {
                       {row.echoNickname ?? row.echoId.slice(0, 8)}
                     </span>
                     <span className="record-history-detail">
-                      S{row.slotNo} · {st?.displayName ?? row.statKey} · 档{row.tierIndex}
-                      {st ? ` = ${formatScaledValue(st.unit, row.valueScaled)}` : ""}
+                      S{row.slotNo} · {st?.displayName ?? row.statKey}={formatScaledValue(st?.unit ?? "", row.valueScaled)}
+                    </span>
+                    <span className="record-history-abbr-group">
+                      <span className={`record-history-abbr-part ${getStatColorClass(row.statKey)}`}>
+                        {statKeyToAbbr(row.statKey)}
+                      </span>
+                      <span className="record-history-abbr-part abbr-tier">
+                        {row.tierIndex}
+                      </span>
                     </span>
                     <span className="record-history-time">
                       {new Date(row.eventTime).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
