@@ -11,6 +11,7 @@ import {
   upsertBackfillState,
 } from "../api/tauri";
 import { BarChart } from "../components/BarChart";
+import { HypothesisVerification } from "../components/HypothesisVerification";
 import {
   beginLongPressDrag,
   cancelLongPressDragCandidate,
@@ -1472,6 +1473,7 @@ export function RecordPage() {
             </div>
           </div>
         </div>
+        <HypothesisVerification />
       </div>
     </section>
   );
