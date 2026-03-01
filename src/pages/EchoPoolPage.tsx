@@ -7,6 +7,19 @@ import {
   updateEcho,
   upsertBackfillState,
 } from "../api/tauri";
+import {
+  beginLongPressDrag,
+  cancelLongPressDragCandidate,
+  CHAIN_LONG_PRESS_MS,
+  clearNativeTextSelection,
+  completeLongPressTap,
+  moveArrayToInsertion,
+  remapIndexAfterInsertion,
+  resolveInsertBeforeIndex,
+  updateLongPressDragCandidate,
+  useChainDragSession,
+  type ChainDragState,
+} from "../hooks/useChainDrag";
 import { useAppStore } from "../store/useAppStore";
 import type { EchoStatus, ExpectationItem, ExpectationPreset } from "../types/domain";
 
@@ -26,15 +39,7 @@ interface BasicDraft {
   status: EchoStatus;
 }
 
-interface DragState {
-  kind: DragKind;
-  fromIndex: number;
-  dropIndex: number;
-  pointerId: number;
-  x: number;
-  y: number;
-  label: string;
-}
+type DragState = ChainDragState<DragKind>;
 
 type PresetDraftSource = Pick<ExpectationPreset, "presetId" | "name" | "items">;
 type PresetCreateSource = "selector" | "manager";
@@ -101,7 +106,6 @@ const ECHO_SORT_OPTIONS: Array<{ value: EchoSortBy; label: string }> = [
   { value: "nickname_asc", label: "名称（A-Z）" },
   { value: "nickname_desc", label: "名称（Z-A）" },
 ];
-const CHAIN_LONG_PRESS_MS = 150;
 
 function sanitizeEchoSortBy(input: unknown): EchoSortBy {
   return ECHO_SORT_OPTIONS.some((option) => option.value === input) ? (input as EchoSortBy) : "created_desc";
@@ -277,74 +281,6 @@ function chainToExpectationItems(stats: string[], ops: RelOp[]): ExpectationItem
     result.push({ statKey: stats[i], rank });
   }
   return result;
-}
-
-function moveArrayToInsertion<T>(arr: T[], from: number, insertionIndex: number): T[] {
-  if (from < 0 || from >= arr.length) {
-    return arr;
-  }
-  const next = [...arr];
-  const [item] = next.splice(from, 1);
-  const clampedIndex = Math.max(0, Math.min(insertionIndex, next.length));
-  next.splice(clampedIndex, 0, item);
-  return next;
-}
-
-function remapIndexAfterInsertion(
-  index: number | null,
-  length: number,
-  from: number,
-  insertionIndex: number,
-): number | null {
-  if (index === null) {
-    return null;
-  }
-  const remapped = moveArrayToInsertion(
-    Array.from({ length }, (_, i) => i),
-    from,
-    insertionIndex,
-  );
-  return remapped.indexOf(index);
-}
-
-function computeInsertionIndex(
-  kind: DragKind,
-  fromIndex: number,
-  clientX: number,
-): number {
-  const hosts = Array.from(document.querySelectorAll<HTMLElement>(`[data-drag-kind="${kind}"][data-drag-index]`))
-    .map((host) => ({
-      host,
-      index: Number(host.dataset.dragIndex),
-    }))
-    .filter((item) => Number.isInteger(item.index) && item.index !== fromIndex)
-    .sort((a, b) => a.index - b.index);
-
-  if (hosts.length === 0) {
-    return 0;
-  }
-
-  const beforeIndex = hosts.findIndex(({ host }) => {
-    const rect = host.getBoundingClientRect();
-    return clientX < rect.left + rect.width / 2;
-  });
-
-  return beforeIndex === -1 ? hosts.length : beforeIndex;
-}
-
-function resolveInsertBeforeIndex(
-  length: number,
-  fromIndex: number,
-  insertionIndex: number,
-): number | null {
-  const visible = Array.from({ length }, (_, i) => i).filter((idx) => idx !== fromIndex);
-  if (insertionIndex < 0) {
-    return visible[0] ?? null;
-  }
-  if (insertionIndex >= visible.length) {
-    return null;
-  }
-  return visible[insertionIndex];
 }
 
 function formatScaledValue(unit: string, valueScaled: number) {
@@ -674,15 +610,6 @@ export function EchoPoolPage() {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    dragStateRef.current = dragState;
-  }, [dragState]);
-
-  useEffect(() => {
-    document.body.classList.toggle("is-dragging-chain", dragState !== null);
-    return () => document.body.classList.remove("is-dragging-chain");
-  }, [dragState]);
-
   // click-outside-to-dismiss for ephemeral toggle states
   useEffect(() => {
     const handler = (e: PointerEvent) => {
@@ -784,114 +711,31 @@ export function EchoPoolPage() {
     setSelectedPresetId(matchedPreset?.presetId ?? null);
   }, [editingEchoId, expectationStats, expectationOps, expectationPresets]);
 
-  useEffect(() => {
-    if (!dragState) {
-      return;
-    }
-
-    const finishDragging = (apply: boolean) => {
-      const current = dragStateRef.current;
-      if (!current) {
-        setDragState(null);
-        return;
+  useChainDragSession<DragKind, DragState>({
+    dragState,
+    dragStateRef,
+    setDragState,
+    getRowElement: (kind) =>
+      kind === "expectation" ? expectationRowRef.current : kind === "slot" ? slotRowRef.current : presetRowRef.current,
+    onApplyDrag: (current) => {
+      if (current.kind === "expectation") {
+        setExpectationStats((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
+        setActiveExpectationIndex((prev) =>
+          remapIndexAfterInsertion(prev, expectationStats.length, current.fromIndex, current.dropIndex),
+        );
+      } else if (current.kind === "slot") {
+        setSlotsDraft((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
+        setActiveSlotIndex((prev) =>
+          remapIndexAfterInsertion(prev, slotsDraft.length, current.fromIndex, current.dropIndex),
+        );
+      } else {
+        setPresetDraftStats((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
+        setActivePresetIndex((prev) =>
+          remapIndexAfterInsertion(prev, presetDraftStats.length, current.fromIndex, current.dropIndex),
+        );
       }
-
-      if (apply) {
-        if (current.kind === "expectation") {
-          setExpectationStats((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
-          setActiveExpectationIndex((prev) =>
-            remapIndexAfterInsertion(prev, expectationStats.length, current.fromIndex, current.dropIndex),
-          );
-        } else if (current.kind === "slot") {
-          setSlotsDraft((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
-          setActiveSlotIndex((prev) =>
-            remapIndexAfterInsertion(prev, slotsDraft.length, current.fromIndex, current.dropIndex),
-          );
-        } else {
-          setPresetDraftStats((prev) => moveArrayToInsertion(prev, current.fromIndex, current.dropIndex));
-          setActivePresetIndex((prev) =>
-            remapIndexAfterInsertion(prev, presetDraftStats.length, current.fromIndex, current.dropIndex),
-          );
-        }
-      }
-
-      setDragState(null);
-    };
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const current = dragStateRef.current;
-      if (!current || current.pointerId !== event.pointerId) {
-        return;
-      }
-
-      event.preventDefault();
-      clearNativeTextSelection();
-
-      if (event.buttons === 0) {
-        finishDragging(true);
-        return;
-      }
-
-      const row =
-        current.kind === "expectation"
-          ? expectationRowRef.current
-          : current.kind === "slot"
-            ? slotRowRef.current
-            : presetRowRef.current;
-      let nextDropIndex = current.dropIndex;
-      if (row) {
-        const rect = row.getBoundingClientRect();
-        const nearRow =
-          event.clientY >= rect.top - 28 &&
-          event.clientY <= rect.bottom + 28 &&
-          event.clientX >= rect.left - 80 &&
-          event.clientX <= rect.right + 80;
-        if (nearRow) {
-          const edgeThreshold = 26;
-          if (event.clientX < rect.left + edgeThreshold) {
-            row.scrollLeft = Math.max(0, row.scrollLeft - 18);
-          } else if (event.clientX > rect.right - edgeThreshold) {
-            row.scrollLeft += 18;
-          }
-          nextDropIndex = computeInsertionIndex(current.kind, current.fromIndex, event.clientX);
-        }
-      }
-
-      setDragState((prev) =>
-        prev && prev.pointerId === event.pointerId
-          ? {
-              ...prev,
-              x: event.clientX,
-              y: event.clientY,
-              dropIndex: nextDropIndex,
-            }
-          : prev,
-      );
-    };
-
-    const handlePointerUp = (event: PointerEvent) => {
-      const current = dragStateRef.current;
-      if (!current || current.pointerId !== event.pointerId) {
-        return;
-      }
-      clearNativeTextSelection();
-      finishDragging(true);
-    };
-
-    const handleSelectStart = (event: Event) => event.preventDefault();
-    const handleBlur = () => finishDragging(false);
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    document.addEventListener("selectstart", handleSelectStart);
-    window.addEventListener("blur", handleBlur);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      document.removeEventListener("selectstart", handleSelectStart);
-      window.removeEventListener("blur", handleBlur);
-    };
-  }, [dragState?.pointerId, expectationStats.length, slotsDraft.length, presetDraftStats.length]);
+    },
+  });
 
   const columnWidths = useMemo(() => {
     const total = Math.max(tableClientWidth, 1);
@@ -966,12 +810,6 @@ export function EchoPoolPage() {
     setSelectedEchoIds([]);
     setSelectionAnchorId(null);
     setPendingBatchDelete(false);
-  };
-  const clearNativeTextSelection = () => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.getSelection?.()?.removeAllRanges();
   };
 
   const applyEchoSelection = (echoId: string, options: { toggle: boolean; range: boolean }) => {
@@ -2501,48 +2339,31 @@ export function EchoPoolPage() {
                                         data-drag-kind="expectation"
                                         data-drag-index={idx}
                                         onPointerDown={(e) => {
-                                          if (e.button !== 0 || (e.target as HTMLElement).tagName === "SELECT") return;
-                                          e.preventDefault();
-                                          clearNativeTextSelection();
-                                          startPosRef.current = { x: e.clientX, y: e.clientY };
-                                          longPressTimerRef.current = setTimeout(() => {
-                                            clearNativeTextSelection();
-                                            setDragState({
-                                              kind: "expectation",
-                                              fromIndex: idx,
-                                              dropIndex: idx,
-                                              pointerId: e.pointerId,
-                                              x: e.clientX,
-                                              y: e.clientY,
-                                              label: stat?.displayName ?? statKey,
-                                            });
-                                            longPressTimerRef.current = null;
-                                          }, CHAIN_LONG_PRESS_MS);
+                                          beginLongPressDrag<DragKind, DragState>({
+                                            event: e,
+                                            kind: "expectation",
+                                            fromIndex: idx,
+                                            label: stat?.displayName ?? statKey,
+                                            longPressTimerRef,
+                                            startPosRef,
+                                            setDragState,
+                                            longPressMs: CHAIN_LONG_PRESS_MS,
+                                            ignoreTagNames: ["SELECT"],
+                                          });
                                         }}
                                         onPointerMove={(e) => {
-                                          if (longPressTimerRef.current) {
-                                            e.preventDefault();
-                                            clearNativeTextSelection();
-                                            const dx = e.clientX - startPosRef.current.x;
-                                            const dy = e.clientY - startPosRef.current.y;
-                                            if (Math.hypot(dx, dy) > 8) {
-                                              clearTimeout(longPressTimerRef.current);
-                                              longPressTimerRef.current = null;
-                                            }
-                                          }
+                                          updateLongPressDragCandidate({
+                                            event: e,
+                                            longPressTimerRef,
+                                            startPosRef,
+                                          });
                                         }}
-                                        onPointerCancel={() => {
-                                          if (longPressTimerRef.current) {
-                                            clearTimeout(longPressTimerRef.current);
-                                            longPressTimerRef.current = null;
-                                          }
-                                        }}
+                                        onPointerCancel={() => cancelLongPressDragCandidate(longPressTimerRef)}
                                         onPointerUp={() => {
-                                          if (longPressTimerRef.current) {
-                                            clearTimeout(longPressTimerRef.current);
-                                            longPressTimerRef.current = null;
-                                            setActiveExpectationIndex(idx);
-                                          }
+                                          completeLongPressTap({
+                                            longPressTimerRef,
+                                            onTap: () => setActiveExpectationIndex(idx),
+                                          });
                                         }}
                                         onContextMenu={(e) => {
                                           e.preventDefault();
@@ -2666,48 +2487,31 @@ export function EchoPoolPage() {
                                       data-drag-kind="slot"
                                       data-drag-index={idx}
                                       onPointerDown={(e) => {
-                                        if (e.button !== 0 || (e.target as HTMLElement).tagName === "SELECT") return;
-                                        e.preventDefault();
-                                        clearNativeTextSelection();
-                                        startPosRef.current = { x: e.clientX, y: e.clientY };
-                                        longPressTimerRef.current = setTimeout(() => {
-                                          clearNativeTextSelection();
-                                          setDragState({
-                                            kind: "slot",
-                                            fromIndex: idx,
-                                            dropIndex: idx,
-                                            pointerId: e.pointerId,
-                                            x: e.clientX,
-                                            y: e.clientY,
-                                            label: `S${previewSlotNo} ${statKeyToAbbr(slot.statKey)}${slot.tierIndex}`,
-                                          });
-                                          longPressTimerRef.current = null;
-                                        }, CHAIN_LONG_PRESS_MS);
+                                        beginLongPressDrag<DragKind, DragState>({
+                                          event: e,
+                                          kind: "slot",
+                                          fromIndex: idx,
+                                          label: `S${previewSlotNo} ${statKeyToAbbr(slot.statKey)}${slot.tierIndex}`,
+                                          longPressTimerRef,
+                                          startPosRef,
+                                          setDragState,
+                                          longPressMs: CHAIN_LONG_PRESS_MS,
+                                          ignoreTagNames: ["SELECT"],
+                                        });
                                       }}
                                       onPointerMove={(e) => {
-                                        if (longPressTimerRef.current) {
-                                          e.preventDefault();
-                                          clearNativeTextSelection();
-                                          const dx = e.clientX - startPosRef.current.x;
-                                          const dy = e.clientY - startPosRef.current.y;
-                                          if (Math.hypot(dx, dy) > 8) {
-                                            clearTimeout(longPressTimerRef.current);
-                                            longPressTimerRef.current = null;
-                                          }
-                                        }
+                                        updateLongPressDragCandidate({
+                                          event: e,
+                                          longPressTimerRef,
+                                          startPosRef,
+                                        });
                                       }}
-                                      onPointerCancel={() => {
-                                        if (longPressTimerRef.current) {
-                                          clearTimeout(longPressTimerRef.current);
-                                          longPressTimerRef.current = null;
-                                        }
-                                      }}
+                                      onPointerCancel={() => cancelLongPressDragCandidate(longPressTimerRef)}
                                       onPointerUp={() => {
-                                        if (longPressTimerRef.current) {
-                                          clearTimeout(longPressTimerRef.current);
-                                          longPressTimerRef.current = null;
-                                          setActiveSlotIndex(idx);
-                                        }
+                                        completeLongPressTap({
+                                          longPressTimerRef,
+                                          onTap: () => setActiveSlotIndex(idx),
+                                        });
                                       }}
                                       onContextMenu={(e) => {
                                         e.preventDefault();
