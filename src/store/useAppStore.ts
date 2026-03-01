@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import {
   getEchoesForStat,
   getGlobalDistribution,
@@ -50,8 +51,10 @@ interface AppState {
   refreshExpectationPresets: () => Promise<void>;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
-  statDefs: [],
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      statDefs: [],
   echoes: [],
   expectationPresets: [],
   distribution: null,
@@ -145,4 +148,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ error: String(error) });
     }
   },
+}), {
+  name: "wuwa-app-store",
+  partialize: (state) => ({ createFormDraft: state.createFormDraft }),
+  merge: (persistedState: any, currentState) => ({
+    ...currentState,
+    ...persistedState,
+    createFormDraft: {
+      ...currentState.createFormDraft,
+      ...persistedState?.createFormDraft,
+    },
+  }),
 }));
