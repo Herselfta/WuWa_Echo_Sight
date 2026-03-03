@@ -362,6 +362,7 @@ export function EchoPoolPage() {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startPosRef = useRef({ x: 0, y: 0 });
   const [activeTierSelectStat, setActiveTierSelectStat] = useState<string | null>(null);
+  const [hoveredTierInfo, setHoveredTierInfo] = useState<{ statKey: string; tierIndex: number } | null>(null);
   const [tierSelectorPos, setTierSelectorPos] = useState({ top: 0, left: 0 });
 
   const [saving, setSaving] = useState(false);
@@ -2158,6 +2159,11 @@ export function EchoPoolPage() {
                                     setActiveTierSelectStat(stat.statKey);
                                   }
                                 }}
+                                title={(() => {
+                                  const tiers = echoFilters.substatTiers[stat.statKey];
+                                  if (!tiers || tiers.length === 0) return "点击选择档位 (Lv1-8)";
+                                  return tiers.map(t => formatTierLabel(stat.statKey, t)).join("\n");
+                                })()}
                               >
                                 {echoFilters.substatTiers[stat.statKey]?.length
                                   ? echoFilters.substatTiers[stat.statKey].join(",")
@@ -2193,6 +2199,9 @@ export function EchoPoolPage() {
                                           <button
                                             key={t}
                                             type="button"
+                                            title={formatTierLabel(stat.statKey, t)}
+                                            onMouseEnter={() => setHoveredTierInfo({ statKey: stat.statKey, tierIndex: t })}
+                                            onMouseLeave={() => setHoveredTierInfo(prev => prev?.tierIndex === t ? null : prev)}
                                             onClick={(e) => {
                                               e.stopPropagation();
                                               setEchoFilters((prev) => {
@@ -2286,6 +2295,20 @@ export function EchoPoolPage() {
                                       <polyline points="20 6 9 17 4 12"></polyline>
                                     </svg>
                                   </button>
+                                  {hoveredTierInfo && hoveredTierInfo.statKey === stat.statKey && (
+                                    <div style={{
+                                      marginLeft: "8px",
+                                      padding: "0 8px",
+                                      fontSize: "11px",
+                                      color: "var(--accent, #3b82f6)",
+                                      fontWeight: "bold",
+                                      borderLeft: "1px solid var(--border, #eee)",
+                                      whiteSpace: "nowrap",
+                                      animation: "slideIn 0.2s ease"
+                                    }}>
+                                      {formatTierLabel(hoveredTierInfo.statKey, hoveredTierInfo.tierIndex).split("：")[1]}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
