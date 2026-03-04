@@ -911,6 +911,7 @@ export function RecordPage() {
 
   /* === history search === */
   const [searchStats, setSearchStats] = useState<string[]>([]);
+  const [searchActiveIdx, setSearchActiveIdx] = useState<number | null>(null);
   const [matchIndices, setMatchIndices] = useState<number[]>([]);
   const [currentMatchIdx, setCurrentMatchIdx] = useState<number>(-1);
   const historyListRef = useRef<HTMLDivElement | null>(null);
@@ -1350,33 +1351,54 @@ export function RecordPage() {
                 </svg>
                 <div className="chain-row" style={{ padding: 0, minHeight: 24 }}>
                   {searchStats.map((sk, idx) => {
+                    const isActive = searchActiveIdx === idx;
                     return (
                       <div
-                        key={idx} className="chain-item"
-                        style={{ padding: "0 4px" }}
+                        key={idx}
+                        className={`chain-item ${isActive ? "active" : ""}`}
+                        style={{ padding: isActive ? "0 4px" : "0", border: isActive ? undefined : "none" }}
                         onContextMenu={(e) => { e.preventDefault(); setSearchStats(prev => prev.filter((_, i) => i !== idx)); }}
-                        title="右键删除"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSearchActiveIdx(idx);
+                        }}
+                        title={isActive ? "选择词条" : `${statMap.get(sk)?.displayName ?? sk} - 点击修改，右键删除`}
                       >
-                        <select
-                          value={sk}
-                          onChange={(e) => {
-                            const nextSk = e.target.value;
-                            setSearchStats(prev => prev.map((item, i) => i === idx ? nextSk : item));
-                          }}
-                        >
-                          {statDefs.map(s => (
-                            <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
-                          ))}
-                        </select>
+                        {isActive ? (
+                          <select
+                            autoFocus
+                            value={sk}
+                            onChange={(e) => {
+                              const nextSk = e.target.value;
+                              setSearchStats(prev => prev.map((item, i) => i === idx ? nextSk : item));
+                              setSearchActiveIdx(null);
+                            }}
+                            onBlur={() => setSearchActiveIdx(null)}
+                            onPointerDown={(e) => e.stopPropagation()}
+                          >
+                            {statDefs.map(s => (
+                              <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="record-history-abbr-group">
+                            <span className={`record-history-abbr-part ${getStatColorClass(sk)}`} style={{ borderRadius: 4 }}>
+                              {statKeyToAbbr(sk)}
+                            </span>
+                          </span>
+                        )}
                       </div>
                     );
                   })}
                   <button
                     type="button" className="chain-add"
                     style={{ height: 20, width: 20, minWidth: 20 }}
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       const firstAvail = statDefs[0].statKey;
+                      const nextIdx = searchStats.length;
                       setSearchStats(prev => [...prev, firstAvail]);
+                      setSearchActiveIdx(nextIdx);
                     }}
                   >+</button>
                 </div>
