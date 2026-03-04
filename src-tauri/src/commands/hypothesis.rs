@@ -10,8 +10,8 @@ use crate::domain::types::{
 };
 
 /* ═══════════════════════════════════════════════════════
-   Stat categories for zone hypothesis
-   ═══════════════════════════════════════════════════════ */
+Stat categories for zone hypothesis
+═══════════════════════════════════════════════════════ */
 
 const STAT_CATEGORIES: &[(&str, &str)] = &[
     ("atk_flat", "atk"),
@@ -44,7 +44,7 @@ const ZONE_LABELS: &[(&str, &[&str])] = &[
     ("攻生区", &["atk", "hp"]),
     ("防生区", &["def", "hp"]),
     ("伤害加成区", &["dmg_bonus"]),
-    ("共鸣区", &["dmg_bonus", "utility"]),    // skill/liberation + energy_regen
+    ("共鸣区", &["dmg_bonus", "utility"]), // skill/liberation + energy_regen
     ("爆区", &["crit"]),
 ];
 
@@ -57,8 +57,8 @@ fn infer_zone(category: &str) -> Vec<&'static str> {
 }
 
 /* ═══════════════════════════════════════════════════════
-   Helper: load ordered event sequences grouped by echo
-   ═══════════════════════════════════════════════════════ */
+Helper: load ordered event sequences grouped by echo
+═══════════════════════════════════════════════════════ */
 
 struct EventSlim {
     stat_key: String,
@@ -160,8 +160,8 @@ fn list_stat_keys(conn: &Connection) -> Result<Vec<(String, String)>, String> {
 }
 
 /* ═══════════════════════════════════════════════════════
-   1. Transition matrix — stat(slot_i) → stat(slot_{i+1})
-   ═══════════════════════════════════════════════════════ */
+1. Transition matrix — stat(slot_i) → stat(slot_{i+1})
+═══════════════════════════════════════════════════════ */
 
 #[tauri::command]
 pub fn get_transition_matrix(
@@ -177,7 +177,11 @@ pub fn get_transition_matrix(
     let sequences = load_echo_sequences(&conn, &filter)?;
 
     let n = key_list.len();
-    let key_idx: HashMap<&str, usize> = key_list.iter().enumerate().map(|(i, k)| (k.as_str(), i)).collect();
+    let key_idx: HashMap<&str, usize> = key_list
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (k.as_str(), i))
+        .collect();
 
     // Count transitions
     let mut matrix = vec![vec![0i64; n]; n];
@@ -197,7 +201,9 @@ pub fn get_transition_matrix(
     // χ² goodness-of-fit vs independence assumption
     // Under H0: P(to | from) = P(to) (marginal probability)
     let row_sums: Vec<i64> = matrix.iter().map(|row| row.iter().sum()).collect();
-    let col_sums: Vec<i64> = (0..n).map(|j| matrix.iter().map(|row| row[j]).sum::<i64>()).collect();
+    let col_sums: Vec<i64> = (0..n)
+        .map(|j| matrix.iter().map(|row| row[j]).sum::<i64>())
+        .collect();
 
     let mut chi_squared = 0.0f64;
 
@@ -214,8 +220,8 @@ pub fn get_transition_matrix(
             // candidates were available per echo. As a first‑order
             // approximation we use the global marginal.
             for &j in &active_cols {
-                let expected = (row_sums[i] as f64) * (col_sums[j] as f64)
-                    / (total_transitions as f64);
+                let expected =
+                    (row_sums[i] as f64) * (col_sums[j] as f64) / (total_transitions as f64);
                 if expected > 0.0 {
                     let observed = matrix[i][j] as f64;
                     chi_squared += (observed - expected).powi(2) / expected;
@@ -265,10 +271,13 @@ pub fn get_transition_matrix(
     }
 
     Ok(TransitionMatrix {
-        stat_keys: key_list.iter().map(|k| {
-            let dn = display_map.get(k).cloned().unwrap_or_else(|| k.clone());
-            (k.clone(), dn)
-        }).collect(),
+        stat_keys: key_list
+            .iter()
+            .map(|k| {
+                let dn = display_map.get(k).cloned().unwrap_or_else(|| k.clone());
+                (k.clone(), dn)
+            })
+            .collect(),
         cells,
         total_transitions,
         chi_squared,
@@ -278,8 +287,8 @@ pub fn get_transition_matrix(
 }
 
 /* ═══════════════════════════════════════════════════════
-   2. Per-slot stat distribution — P(stat | slotNo)
-   ═══════════════════════════════════════════════════════ */
+2. Per-slot stat distribution — P(stat | slotNo)
+═══════════════════════════════════════════════════════ */
 
 #[tauri::command]
 pub fn get_slot_stat_distribution(
@@ -291,8 +300,11 @@ pub fn get_slot_stat_distribution(
     let stat_keys = list_stat_keys(&conn)?;
     let key_list: Vec<String> = stat_keys.iter().map(|(k, _)| k.clone()).collect();
     let display_map: HashMap<String, String> = stat_keys.into_iter().collect();
-    let key_idx: HashMap<&str, usize> =
-        key_list.iter().enumerate().map(|(i, k)| (k.as_str(), i)).collect();
+    let key_idx: HashMap<&str, usize> = key_list
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (k.as_str(), i))
+        .collect();
 
     let sequences = load_echo_sequences(&conn, &filter)?;
 
@@ -379,8 +391,8 @@ pub fn get_slot_stat_distribution(
 }
 
 /* ═══════════════════════════════════════════════════════
-   3. Category streak / zone analysis
-   ═══════════════════════════════════════════════════════ */
+3. Category streak / zone analysis
+═══════════════════════════════════════════════════════ */
 
 #[tauri::command]
 pub fn get_category_streak_analysis(
@@ -423,8 +435,7 @@ pub fn get_category_streak_analysis(
             if streak_len >= 2 {
                 let stats_in_streak: Vec<String> =
                     events[i..j].iter().map(|e| e.stat_key.clone()).collect();
-                let tiers_in_streak: Vec<i64> =
-                    events[i..j].iter().map(|e| e.tier_index).collect();
+                let tiers_in_streak: Vec<i64> = events[i..j].iter().map(|e| e.tier_index).collect();
                 rows.push(CategoryStreakRow {
                     echo_id: echo_id.clone(),
                     category: cat.to_string(),
@@ -522,7 +533,11 @@ pub fn get_category_streak_analysis(
     // For 4-tier stats: P(same) = 1/4 = 25%, P(±1) = (2*2 + 1*2) / (4*4) = 6/16 = 37.5%
 
     // Sort streaks by length descending
-    rows.sort_by(|a, b| b.length.cmp(&a.length).then_with(|| a.echo_id.cmp(&b.echo_id)));
+    rows.sort_by(|a, b| {
+        b.length
+            .cmp(&a.length)
+            .then_with(|| a.echo_id.cmp(&b.echo_id))
+    });
 
     // format zone_transitions into vec
     let mut zone_transitions: Vec<(String, String, i64)> = zone_transition_counts
@@ -561,8 +576,8 @@ pub fn get_category_streak_analysis(
 }
 
 /* ═══════════════════════════════════════════════════════
-   χ² p-value approximation
-   ═══════════════════════════════════════════════════════ */
+χ² p-value approximation
+═══════════════════════════════════════════════════════ */
 
 fn chi_sq_p_value(chi2: f64, df: i64) -> f64 {
     // Use Wilson–Hilferty normal approximation for chi-squared CDF
@@ -586,18 +601,17 @@ fn erfc_approx(x: f64) -> f64 {
     let t = 1.0 / (1.0 + 0.3275911 * x);
     let poly = t
         * (0.254829592
-            + t * (-0.284496736
-                + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+            + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
     poly * (-x * x).exp()
 }
 
 /* ═══════════════════════════════════════════════════════
-   4. Mean-reversion analysis
-      ─ Flatten all events into global analysis_seq order
-      ─ Per stat: running cumulative frequency deviation,
-        inter-arrival gap statistics, autocorrelation,
-        and window-conditional frequency
-   ═══════════════════════════════════════════════════════ */
+4. Mean-reversion analysis
+   ─ Flatten all events into global analysis_seq order
+   ─ Per stat: running cumulative frequency deviation,
+     inter-arrival gap statistics, autocorrelation,
+     and window-conditional frequency
+═══════════════════════════════════════════════════════ */
 
 /// Load all events in global analysis_seq order (regardless of echo grouping).
 /// Returns (analysis_seq, stat_key) pairs.
@@ -723,9 +737,7 @@ pub fn get_reversion_analysis(
             .collect();
 
         // Positions (0-indexed) where this stat appeared
-        let positions: Vec<usize> = (0..n)
-            .filter(|&i| indicator[i] > 0.5)
-            .collect();
+        let positions: Vec<usize> = (0..n).filter(|&i| indicator[i] > 0.5).collect();
 
         // Inter-arrival gaps (in events between consecutive appearances)
         let gaps: Vec<i64> = positions.windows(2).map(|w| (w[1] - w[0]) as i64).collect();
@@ -735,11 +747,14 @@ pub fn get_reversion_analysis(
         } else {
             gaps.iter().sum::<i64>() as f64 / gaps.len() as f64
         };
-        let expected_gap = if base_freq > 0.0 { 1.0 / base_freq } else { 0.0 };
+        let expected_gap = if base_freq > 0.0 {
+            1.0 / base_freq
+        } else {
+            0.0
+        };
         let gap_variance = if gaps.len() > 1 {
             let m = mean_gap;
-            gaps.iter().map(|&g| (g as f64 - m).powi(2)).sum::<f64>()
-                / (gaps.len() - 1) as f64
+            gaps.iter().map(|&g| (g as f64 - m).powi(2)).sum::<f64>() / (gaps.len() - 1) as f64
         } else {
             f64::NAN
         };

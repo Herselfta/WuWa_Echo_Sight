@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
 use chrono::Utc;
 use csv::{ReaderBuilder, Writer};
@@ -12,6 +13,74 @@ use zip::ZipArchive;
 use crate::commands::analysis::get_global_distribution_internal;
 use crate::db::{open_connection, AppState};
 use crate::domain::types::{ExportCsvInput, ExportCsvOutput, ImportDataInput, ImportDataOutput};
+
+fn percent_decode(input: &str) -> Result<String, String> {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut idx = 0usize;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'%' => {
+                if idx + 2 >= bytes.len() {
+                    return Err("invalid percent-encoding in file url path".to_string());
+                }
+                let hi = (bytes[idx + 1] as char)
+                    .to_digit(16)
+                    .ok_or_else(|| "invalid percent-encoding in file url path".to_string())?;
+                let lo = (bytes[idx + 2] as char)
+                    .to_digit(16)
+                    .ok_or_else(|| "invalid percent-encoding in file url path".to_string())?;
+                output.push(((hi << 4) + lo) as u8);
+                idx += 3;
+            }
+            b'+' => {
+                output.push(b' ');
+                idx += 1;
+            }
+            b => {
+                output.push(b);
+                idx += 1;
+            }
+        }
+    }
+
+    String::from_utf8(output).map_err(|_| "decoded file url path is not valid UTF-8".to_string())
+}
+
+fn resolve_import_zip_path(raw_path: &str) -> Result<PathBuf, String> {
+    let trimmed = raw_path.trim().trim_matches(|c| c == '"' || c == '\'');
+    if trimmed.is_empty() {
+        return Err("zip path is empty".to_string());
+    }
+
+    if trimmed == "~" || trimmed.starts_with("~/") {
+        let home =
+            std::env::var("HOME").map_err(|_| "failed to resolve HOME for ~ path".to_string())?;
+        let suffix = if trimmed == "~" { "" } else { &trimmed[2..] };
+        return Ok(if suffix.is_empty() {
+            PathBuf::from(home)
+        } else {
+            PathBuf::from(home).join(suffix)
+        });
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("file://") {
+        let path_part = if let Some(local_rest) = rest.strip_prefix("localhost/") {
+            format!("/{}", local_rest)
+        } else if rest.starts_with('/') {
+            rest.to_string()
+        } else if let Some(slash_idx) = rest.find('/') {
+            rest[slash_idx..].to_string()
+        } else {
+            return Err("invalid file:// url path".to_string());
+        };
+        let decoded = percent_decode(&path_part)?;
+        return Ok(PathBuf::from(decoded));
+    }
+
+    Ok(PathBuf::from(trimmed))
+}
 
 fn sql_value_to_string(value: ValueRef<'_>) -> String {
     match value {
@@ -63,7 +132,9 @@ fn export_table_to_csv(conn: &Connection, table: &str) -> Result<Vec<u8>, String
         .map_err(|e| format!("failed to finalize csv for {table}: {e}"))
 }
 
-fn distribution_to_csv_bytes(payload: &crate::domain::types::DistributionPayload) -> Result<Vec<u8>, String> {
+fn distribution_to_csv_bytes(
+    payload: &crate::domain::types::DistributionPayload,
+) -> Result<Vec<u8>, String> {
     let mut writer = Writer::from_writer(Vec::new());
     writer
         .write_record([
@@ -103,9 +174,7 @@ fn distribution_to_csv_bytes(payload: &crate::domain::types::DistributionPayload
 }
 
 fn parse_csv_rows(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, String> {
-    let mut reader = ReaderBuilder::new()
-        .flexible(true)
-        .from_reader(bytes);
+    let mut reader = ReaderBuilder::new().flexible(true).from_reader(bytes);
 
     let headers = reader
         .headers()
@@ -143,7 +212,11 @@ fn read_csv_rows_from_zip(
     parse_csv_rows(&bytes).map(Some)
 }
 
-fn get_required<'a>(row: &'a HashMap<String, String>, key: &str, table: &str) -> Result<&'a str, String> {
+fn get_required<'a>(
+    row: &'a HashMap<String, String>,
+    key: &str,
+    table: &str,
+) -> Result<&'a str, String> {
     row.get(key)
         .map(|s| s.as_str())
         .ok_or_else(|| format!("missing required field {key} in {table}"))
@@ -155,7 +228,10 @@ fn parse_i64(value: &str, key: &str, table: &str) -> Result<i64, String> {
         .map_err(|e| format!("invalid i64 for {key} in {table}: {e}"))
 }
 
-fn insert_rows_from_zip(conn: &mut Connection, archive: &mut ZipArchive<File>) -> Result<Vec<String>, String> {
+fn insert_rows_from_zip(
+    conn: &mut Connection,
+    archive: &mut ZipArchive<File>,
+) -> Result<Vec<String>, String> {
     let mut imported_tables = Vec::new();
 
     let tables = vec![
@@ -225,7 +301,11 @@ fn insert_rows_from_zip(conn: &mut Connection, archive: &mut ZipArchive<File>) -
                 rusqlite::params![
                     get_required(row, "echo_id", "echo_expectations.csv")?,
                     get_required(row, "stat_key", "echo_expectations.csv")?,
-                    parse_i64(get_required(row, "rank", "echo_expectations.csv")?, "rank", "echo_expectations.csv")?,
+                    parse_i64(
+                        get_required(row, "rank", "echo_expectations.csv")?,
+                        "rank",
+                        "echo_expectations.csv"
+                    )?,
                 ],
             )
             .map_err(|e| format!("failed to import echo_expectations row: {e}"))?;
@@ -263,13 +343,33 @@ fn insert_rows_from_zip(conn: &mut Connection, archive: &mut ZipArchive<File>) -
                 rusqlite::params![
                     get_required(row, "event_id", "events.csv")?,
                     get_required(row, "echo_id", "events.csv")?,
-                    parse_i64(get_required(row, "slot_no", "events.csv")?, "slot_no", "events.csv")?,
+                    parse_i64(
+                        get_required(row, "slot_no", "events.csv")?,
+                        "slot_no",
+                        "events.csv"
+                    )?,
                     get_required(row, "stat_key", "events.csv")?,
-                    parse_i64(get_required(row, "tier_index", "events.csv")?, "tier_index", "events.csv")?,
-                    parse_i64(get_required(row, "value_scaled", "events.csv")?, "value_scaled", "events.csv")?,
+                    parse_i64(
+                        get_required(row, "tier_index", "events.csv")?,
+                        "tier_index",
+                        "events.csv"
+                    )?,
+                    parse_i64(
+                        get_required(row, "value_scaled", "events.csv")?,
+                        "value_scaled",
+                        "events.csv"
+                    )?,
                     get_required(row, "event_time", "events.csv")?,
-                    parse_i64(get_required(row, "created_seq", "events.csv")?, "created_seq", "events.csv")?,
-                    parse_i64(get_required(row, "analysis_seq", "events.csv")?, "analysis_seq", "events.csv")?,
+                    parse_i64(
+                        get_required(row, "created_seq", "events.csv")?,
+                        "created_seq",
+                        "events.csv"
+                    )?,
+                    parse_i64(
+                        get_required(row, "analysis_seq", "events.csv")?,
+                        "analysis_seq",
+                        "events.csv"
+                    )?,
                     get_required(row, "game_day", "events.csv")?,
                     get_required(row, "created_at", "events.csv")?,
                 ],
@@ -382,7 +482,10 @@ pub fn export_csv(
 ) -> Result<ExportCsvOutput, String> {
     let conn = open_connection(&state)?;
 
-    let export_name = format!("wuwa_echo_sight_export_{}.zip", Utc::now().format("%Y%m%d_%H%M%S"));
+    let export_name = format!(
+        "wuwa_echo_sight_export_{}.zip",
+        Utc::now().format("%Y%m%d_%H%M%S")
+    );
     let zip_path = std::env::temp_dir().join(export_name);
 
     let file = File::create(&zip_path).map_err(|e| format!("failed to create zip file: {e}"))?;
@@ -449,10 +552,20 @@ pub fn import_data(
     input: ImportDataInput,
 ) -> Result<ImportDataOutput, String> {
     let mut conn = open_connection(&state)?;
+    let zip_path = resolve_import_zip_path(&input.zip_path)?;
 
-    let file = File::open(&input.zip_path)
-        .map_err(|e| format!("failed to open zip file {}: {e}", input.zip_path))?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("failed to parse zip archive: {e}"))?;
+    let file = File::open(&zip_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            format!(
+                "failed to open zip file {}: permission denied (on macOS, accessing Downloads/Desktop/Documents by path may require selecting the file via native picker)",
+                zip_path.display()
+            )
+        } else {
+            format!("failed to open zip file {}: {e}", zip_path.display())
+        }
+    })?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("failed to parse zip archive: {e}"))?;
 
     let imported_tables = insert_rows_from_zip(&mut conn, &mut archive)?;
 
@@ -460,4 +573,33 @@ pub fn import_data(
         ok: true,
         imported_tables,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::resolve_import_zip_path;
+
+    #[test]
+    fn resolve_zip_path_trims_wrapping_quotes() {
+        let resolved = resolve_import_zip_path("  '/tmp/demo.zip'  ").expect("path should resolve");
+        assert_eq!(resolved, PathBuf::from("/tmp/demo.zip"));
+    }
+
+    #[test]
+    fn resolve_zip_path_supports_file_url_and_decoding() {
+        let resolved = resolve_import_zip_path("file:///tmp/my%20export.zip")
+            .expect("file url should resolve");
+        assert!(resolved.is_absolute());
+        assert!(resolved.to_string_lossy().ends_with("/tmp/my export.zip"));
+    }
+
+    #[test]
+    fn resolve_zip_path_supports_tilde() {
+        let home = std::env::var("HOME").expect("HOME should exist for this test");
+        let resolved =
+            resolve_import_zip_path("~/Downloads/demo.zip").expect("tilde path should resolve");
+        assert_eq!(resolved, PathBuf::from(home).join("Downloads/demo.zip"));
+    }
 }

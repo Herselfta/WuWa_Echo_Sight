@@ -59,7 +59,9 @@ fn load_event_counts(
         where_clause
     );
     let total: i64 = conn
-        .query_row(&total_query, params_from_iter(params_vec.clone()), |row| row.get(0))
+        .query_row(&total_query, params_from_iter(params_vec.clone()), |row| {
+            row.get(0)
+        })
         .map_err(|e| format!("failed to query total count: {e}"))?;
 
     let counts_query = format!(
@@ -90,7 +92,9 @@ fn load_event_counts(
 
 fn list_stats(conn: &Connection) -> Result<Vec<(String, String, String)>, String> {
     let mut stmt = conn
-        .prepare("SELECT stat_key, display_name, unit FROM stat_defs WHERE enabled = 1 ORDER BY rowid")
+        .prepare(
+            "SELECT stat_key, display_name, unit FROM stat_defs WHERE enabled = 1 ORDER BY rowid",
+        )
         .map_err(|e| format!("failed to query stat_defs: {e}"))?;
     let rows = stmt
         .query_map([], |row| {
@@ -123,7 +127,8 @@ pub fn get_global_distribution_internal(
                 0.0
             };
             let (ci_freq_low, ci_freq_high) = wilson_interval(count, total_events, confidence);
-            let (bayes_mean, bayes_low, bayes_high) = bayes_interval(count, total_events, confidence);
+            let (bayes_mean, bayes_low, bayes_high) =
+                bayes_interval(count, total_events, confidence);
 
             DistributionRow {
                 stat_key: stat_key.clone(),
@@ -224,8 +229,15 @@ pub fn get_echoes_for_stat_internal(
     let mut signature_cache: HashMap<String, f64> = HashMap::new();
     let mut result = Vec::new();
 
-    for (echo_id, nickname, main_stat_key, cost_class, status, opened_slots_count, expectation_rank_min) in
-        base_rows
+    for (
+        echo_id,
+        nickname,
+        main_stat_key,
+        cost_class,
+        status,
+        opened_slots_count,
+        expectation_rank_min,
+    ) in base_rows
     {
         let owned_stats = owned_stmt
             .query_map([&echo_id], |row| row.get::<_, String>(0))

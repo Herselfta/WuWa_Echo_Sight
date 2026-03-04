@@ -6,10 +6,10 @@ use uuid::Uuid;
 
 use crate::db::{get_tier_value, now_rfc3339, open_connection, AppState};
 use crate::domain::types::{
-    BackfillSlotInput, CreateEchoInput, CreateEchoOutput, DeleteEchoInput, EchoFilter, EchoSubstatSlot,
-    EchoSummary, DeleteExpectationPresetInput, ExpectationItem, ExpectationPreset,
-    SaveExpectationPresetInput, SaveExpectationPresetOutput, SetExpectationsInput, SimpleOk, StatDef,
-    StatTier, UpdateEchoInput, UpsertBackfillInput,
+    BackfillSlotInput, CreateEchoInput, CreateEchoOutput, DeleteEchoInput,
+    DeleteExpectationPresetInput, EchoFilter, EchoSubstatSlot, EchoSummary, ExpectationItem,
+    ExpectationPreset, SaveExpectationPresetInput, SaveExpectationPresetOutput,
+    SetExpectationsInput, SimpleOk, StatDef, StatTier, UpdateEchoInput, UpsertBackfillInput,
 };
 
 fn ensure_status(status: &str) -> Result<(), String> {
@@ -33,7 +33,10 @@ fn ensure_expectation_items(items: &[ExpectationItem]) -> Result<(), String> {
             return Err(format!("rank must be >= 1, got {}", item.rank));
         }
         if !stat_set.insert(item.stat_key.clone()) {
-            return Err(format!("duplicate stat_key in expectation items: {}", item.stat_key));
+            return Err(format!(
+                "duplicate stat_key in expectation items: {}",
+                item.stat_key
+            ));
         }
     }
     Ok(())
@@ -43,7 +46,9 @@ fn ensure_expectation_items(items: &[ExpectationItem]) -> Result<(), String> {
 pub fn list_stat_defs(state: State<'_, AppState>) -> Result<Vec<StatDef>, String> {
     let conn = open_connection(&state)?;
     let mut stmt = conn
-        .prepare("SELECT stat_key, display_name, unit FROM stat_defs WHERE enabled = 1 ORDER BY rowid")
+        .prepare(
+            "SELECT stat_key, display_name, unit FROM stat_defs WHERE enabled = 1 ORDER BY rowid",
+        )
         .map_err(|e| format!("failed to query stat_defs: {e}"))?;
     let mut rows = stmt
         .query([])
@@ -196,15 +201,21 @@ pub fn delete_echo(state: State<'_, AppState>, input: DeleteEchoInput) -> Result
     )
     .map_err(|e| format!("failed to delete event_edit_logs: {e}"))?;
 
-    tx.execute("DELETE FROM ordered_events WHERE echo_id = ?1", [&input.echo_id])
-        .map_err(|e| format!("failed to delete ordered_events: {e}"))?;
+    tx.execute(
+        "DELETE FROM ordered_events WHERE echo_id = ?1",
+        [&input.echo_id],
+    )
+    .map_err(|e| format!("failed to delete ordered_events: {e}"))?;
     tx.execute(
         "DELETE FROM echo_current_substats WHERE echo_id = ?1",
         [&input.echo_id],
     )
     .map_err(|e| format!("failed to delete current_substats: {e}"))?;
-    tx.execute("DELETE FROM echo_expectations WHERE echo_id = ?1", [&input.echo_id])
-        .map_err(|e| format!("failed to delete expectations: {e}"))?;
+    tx.execute(
+        "DELETE FROM echo_expectations WHERE echo_id = ?1",
+        [&input.echo_id],
+    )
+    .map_err(|e| format!("failed to delete expectations: {e}"))?;
     tx.execute("DELETE FROM echoes WHERE echo_id = ?1", [&input.echo_id])
         .map_err(|e| format!("failed to delete echo: {e}"))?;
 
@@ -273,8 +284,16 @@ pub fn list_echoes(
     let mut output = Vec::new();
 
     for row in base_rows {
-        let (echo_id, nickname, main_stat_key, cost_class, status, opened_slots_count, created_at, updated_at) =
-            row.map_err(|e| format!("failed to read echo row: {e}"))?;
+        let (
+            echo_id,
+            nickname,
+            main_stat_key,
+            cost_class,
+            status,
+            opened_slots_count,
+            created_at,
+            updated_at,
+        ) = row.map_err(|e| format!("failed to read echo row: {e}"))?;
 
         let mut exp_stmt = conn
             .prepare(
@@ -475,7 +494,9 @@ pub fn upsert_backfill_state(
 }
 
 #[tauri::command]
-pub fn list_expectation_presets(state: State<'_, AppState>) -> Result<Vec<ExpectationPreset>, String> {
+pub fn list_expectation_presets(
+    state: State<'_, AppState>,
+) -> Result<Vec<ExpectationPreset>, String> {
     let conn = open_connection(&state)?;
     let mut preset_stmt = conn
         .prepare(

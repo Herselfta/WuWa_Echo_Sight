@@ -313,8 +313,8 @@ pub struct ImportDataOutput {
 }
 
 /* ═══════════════════════════════════════════════════════
-   Hypothesis verification types
-   ═══════════════════════════════════════════════════════ */
+Hypothesis verification types
+═══════════════════════════════════════════════════════ */
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

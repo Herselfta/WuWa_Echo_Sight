@@ -4,8 +4,8 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::db::{
-    compute_game_day, get_setting_i64, get_tier_value, now_rfc3339, open_connection, parse_event_time,
-    AppState, DEFAULT_DAY_BOUNDARY_HOUR,
+    compute_game_day, get_setting_i64, get_tier_value, now_rfc3339, open_connection,
+    parse_event_time, AppState, DEFAULT_DAY_BOUNDARY_HOUR,
 };
 use crate::domain::types::{
     AppendOrderedEventInput, AppendOrderedEventOutput, DeleteOrderedEventInput,
@@ -74,7 +74,10 @@ pub fn append_ordered_event(
         .optional()
         .map_err(|e| format!("failed to check slot conflict: {e}"))?;
     if slot_exists.is_some() {
-        return Err(format!("slot {} already has an ordered event", input.slot_no));
+        return Err(format!(
+            "slot {} already has an ordered event",
+            input.slot_no
+        ));
     }
 
     let duplicate_stat: Option<i64> = tx

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   createProbabilitySnapshot,
   editOrderedEvent,
@@ -129,6 +130,23 @@ export function AnalysisPage() {
     }
   };
 
+  const pickImportZip = async () => {
+    setMessage("");
+    try {
+      const selected = await open({
+        title: "选择导入 ZIP 文件",
+        multiple: false,
+        directory: false,
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+      });
+      if (typeof selected === "string") {
+        setImportZipPath(selected);
+      }
+    } catch (error) {
+      setMessage(String(error));
+    }
+  };
+
   return (
     <section className="page">
       <div className="card inline-row">
@@ -143,6 +161,9 @@ export function AnalysisPage() {
           onChange={(e) => setImportZipPath(e.target.value)}
           placeholder="导入 zip 绝对路径"
         />
+        <button type="button" onClick={() => void pickImportZip()} disabled={loading}>
+          选择 zip
+        </button>
         <button type="button" onClick={() => void doImport()} disabled={loading}>
           导入数据
         </button>
@@ -234,4 +255,3 @@ export function AnalysisPage() {
     </section>
   );
 }
-

@@ -5,12 +5,16 @@ mod domain;
 
 use tauri::Manager;
 
-use commands::analysis::{create_probability_snapshot, get_echoes_for_stat, get_global_distribution};
+use commands::analysis::{
+    create_probability_snapshot, get_echoes_for_stat, get_global_distribution,
+};
 use commands::echo::{
     create_echo, delete_echo, delete_expectation_preset, list_echoes, list_expectation_presets,
     list_stat_defs, save_expectation_preset, set_expectations, update_echo, upsert_backfill_state,
 };
-use commands::event::{append_ordered_event, delete_ordered_event, edit_ordered_event, get_event_history};
+use commands::event::{
+    append_ordered_event, delete_ordered_event, edit_ordered_event, get_event_history,
+};
 use commands::export::{export_csv, import_data};
 use commands::hypothesis::{
     get_category_streak_analysis, get_reversion_analysis, get_slot_stat_distribution,
@@ -21,6 +25,7 @@ use db::{init_database, AppState};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .setup(|app| {

@@ -13,8 +13,7 @@ pub struct AppState {
 
 pub fn init_database(db_path: &Path) -> Result<(), String> {
     if let Some(parent) = db_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create app data dir: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("failed to create app data dir: {e}"))?;
     }
 
     let conn = Connection::open(db_path).map_err(|e| format!("failed to open db: {e}"))?;

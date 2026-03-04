@@ -32,3 +32,4 @@ statrs = "0.17"
 csv = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 hex = "0.4"
+tauri-plugin-dialog = "2"
