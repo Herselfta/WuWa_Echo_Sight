@@ -144,8 +144,9 @@ function statKeyToAbbr(statKey: string): string {
 function getStatColorClass(statKey: string): string {
   if (["hp_pct", "hp_flat", "def_pct", "def_flat"].includes(statKey)) return "record-history-abbr-green";
   if (["crit_rate", "crit_dmg"].includes(statKey)) return "record-history-abbr-red";
-  if (["energy_regen", "atk_pct"].includes(statKey)) return "record-history-abbr-orange";
-  if (["atk_flat", "basic_dmg", "heavy_dmg", "skill_dmg", "liberation_dmg"].includes(statKey)) return "record-history-abbr-blue";
+  if (statKey === "energy_regen") return "record-history-abbr-regen";
+  if (["atk_pct", "atk_flat"].includes(statKey)) return "record-history-abbr-atk";
+  if (["basic_dmg", "heavy_dmg", "skill_dmg", "liberation_dmg"].includes(statKey)) return "record-history-abbr-blue";
   return "record-history-abbr-blue"; // default
 }
 
@@ -908,6 +909,54 @@ export function RecordPage() {
     return list.slice(0, parsedHistoryLimit);
   }, [eventHistory, historyTodayOnly, parsedHistoryLimit]);
 
+  /* === history search === */
+  const [searchStats, setSearchStats] = useState<string[]>([]);
+  const [matchIndices, setMatchIndices] = useState<number[]>([]);
+  const [currentMatchIdx, setCurrentMatchIdx] = useState<number>(-1);
+  const historyListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (searchStats.length === 0) {
+      setMatchIndices([]);
+      setCurrentMatchIdx(-1);
+      return;
+    }
+    const matches: number[] = [];
+    // User: "在前方的词条对应先出的词条"
+    // In searchStats [S1, S2, S3], S1 is oldest.
+    // In displayedHistory [H0 (newest), H1, ..., Hn (oldest)]
+    // Match logic: H[i] == SN, ..., H[i+N-1] == S1
+    for (let i = 0; i <= displayedHistory.length - searchStats.length; i++) {
+      let isMatch = true;
+      for (let j = 0; j < searchStats.length; j++) {
+        const historyItem = displayedHistory[i + (searchStats.length - 1 - j)];
+        if (historyItem.statKey !== searchStats[j]) {
+          isMatch = false;
+          break;
+        }
+      }
+      if (isMatch) matches.push(i);
+    }
+    setMatchIndices(matches);
+    setCurrentMatchIdx(matches.length > 0 ? 0 : -1);
+  }, [searchStats, displayedHistory]);
+
+  const jumpToMatch = (dir: "prev" | "next") => {
+    if (matchIndices.length === 0) return;
+    let nextIdx = currentMatchIdx + (dir === "next" ? 1 : -1);
+    // Note: Since list is newest-to-oldest, "prev" in search (older) means "next" in list index
+    // But we'll just follow the list order for the jump buttons (up/down)
+    if (nextIdx < 0) nextIdx = matchIndices.length - 1;
+    if (nextIdx >= matchIndices.length) nextIdx = 0;
+    setCurrentMatchIdx(nextIdx);
+
+    const targetIdx = matchIndices[nextIdx];
+    const listEl = historyListRef.current;
+    if (listEl && listEl.children[targetIdx]) {
+      listEl.children[targetIdx].scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
   return (
     <section className="page record-page">
       {/* Toast */}
@@ -1287,35 +1336,99 @@ export function RecordPage() {
           {/* 最近事件 */}
           <div className="card record-card record-history-card">
             <div className="record-card-header" style={{ marginBottom: 12 }}>
-              <span className="record-section-title">最近录入</span>
-              <div className="inline-row" style={{ gap: 8, fontSize: 13, fontWeight: "normal" }}>
-                <label className="inline-row" style={{ gap: 4 }}>
-                  <input
-                    type="checkbox"
-                    checked={historyTodayOnly}
-                    onChange={(e) => setHistoryTodayOnly(e.target.checked)}
-                  />
-                  仅限今日
-                </label>
-                <label className="inline-row" style={{ gap: 4 }}>
-                  上限:
-                  <input
-                    type="number"
-                    style={{ width: 48 }}
-                    min={1}
-                    value={historyLimitStr}
-                    onChange={(e) => setHistoryLimitStr(e.target.value)}
-                  />
-                </label>
+              <div className="inline-row" style={{ width: "100%", justifyContent: "space-between" }}>
+                <span className="record-section-title">最近录入</span>
+                <div className="inline-row" style={{ gap: 8, fontSize: 13, fontWeight: "normal" }}>
+                  <label className="inline-row" style={{ gap: 4 }}>
+                    <input
+                      type="checkbox"
+                      checked={historyTodayOnly}
+                      onChange={(e) => setHistoryTodayOnly(e.target.checked)}
+                    />
+                    仅限今日
+                  </label>
+                  <label className="inline-row" style={{ gap: 4 }}>
+                    上限:
+                    <input
+                      type="number"
+                      style={{ width: 48 }}
+                      min={1}
+                      value={historyLimitStr}
+                      onChange={(e) => setHistoryLimitStr(e.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* 查找工具栏 */}
+              <div className="record-history-search-bar">
+                <span className="record-field-label" style={{ whiteSpace: "nowrap" }}>查找：</span>
+                <div className="chain-row" style={{ padding: 0, minHeight: 28 }}>
+                  {searchStats.map((sk, idx) => {
+                    const st = statMap.get(sk);
+                    return (
+                      <div
+                        key={idx} className="chain-item"
+                        onContextMenu={(e) => { e.preventDefault(); setSearchStats(prev => prev.filter((_, i) => i !== idx)); }}
+                        onClick={() => {
+                          const nextIdx = (statDefs.findIndex(s => s.statKey === sk) + 1) % statDefs.length;
+                          const nextSk = statDefs[nextIdx].statKey;
+                          setSearchStats(prev => prev.map((item, i) => i === idx ? nextSk : item));
+                        }}
+                        title="点击快速切换，右键删除"
+                      >
+                        {st?.displayName ?? sk}
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button" className="chain-add"
+                    onClick={() => {
+                      const firstAvail = statDefs[0].statKey;
+                      setSearchStats(prev => [...prev, firstAvail]);
+                    }}
+                  >+</button>
+                </div>
+                {searchStats.length > 0 && (
+                  <div className="inline-row" style={{ marginLeft: "auto", gap: 4 }}>
+                    <span className="record-history-match-info">
+                      {matchIndices.length > 0 ? `${currentMatchIdx + 1} / ${matchIndices.length}` : "无匹配"}
+                    </span>
+                    <button type="button" className="record-history-jump-btn" onClick={() => jumpToMatch("prev")}>↑</button>
+                    <button type="button" className="record-history-jump-btn" onClick={() => jumpToMatch("next")}>↓</button>
+                    <button type="button" className="record-history-jump-btn" onClick={() => setSearchStats([])}>✕</button>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="record-history-list">
-              {displayedHistory.map((row) => {
+
+            <div className="record-history-list" ref={historyListRef}>
+              {displayedHistory.map((row, idx) => {
                 const st = statDefs.find((s) => s.statKey === row.statKey);
+                // Compute preexisting stats
+                const echo = echoes.find(e => e.echoId === row.echoId);
+                const preStats = echo ? echo.currentSubstats.filter(s => s.slotNo < row.slotNo).sort((a, b) => a.slotNo - b.slotNo) : [];
+
+                // Search Highlight logic
+                let isPartOfMatch = false;
+                let isMatchCurrent = false;
+
+                if (matchIndices.length > 0) {
+                  const activeMatchStart = matchIndices[currentMatchIdx];
+                  // If current row is within the sequence starting at any match index
+                  for (let mStart of matchIndices) {
+                    if (idx >= mStart && idx < mStart + searchStats.length) {
+                      isPartOfMatch = true;
+                      if (mStart === activeMatchStart) isMatchCurrent = true;
+                      break;
+                    }
+                  }
+                }
+
                 return (
                   <div
                     key={row.eventId}
-                    className={`record-history-item ${row.echoId === selectedEchoId ? "record-history-active" : ""}`}
+                    className={`record-history-item ${row.echoId === selectedEchoId ? "record-history-active" : ""} ${isPartOfMatch ? "is-match" : ""} ${isMatchCurrent ? "is-match-current" : ""}`}
                     onClick={() => setSelectedEchoId(row.echoId)}
                     title={`点击切换到此声骸 · ${row.eventId}`}
                   >
@@ -1333,6 +1446,21 @@ export function RecordPage() {
                     <span className="record-history-detail">
                       S{row.slotNo} · {st?.displayName ?? row.statKey}={formatScaledValue(st?.unit ?? "", row.valueScaled)}
                     </span>
+                    <div className="record-history-prestats">
+                      {preStats.map((pre) => {
+                        const pst = statMap.get(pre.statKey);
+                        return (
+                          <span key={pre.slotNo} className="record-history-abbr-group" title={`${pst?.displayName ?? pre.statKey} 档${pre.tierIndex}：${formatScaledValue(pst?.unit ?? "flat", pre.valueScaled)}`}>
+                            <span className={`record-history-abbr-part ${getStatColorClass(pre.statKey)}`}>
+                              {statKeyToAbbr(pre.statKey)}
+                            </span>
+                            <span className="record-history-abbr-part abbr-tier">
+                              {pre.tierIndex}
+                            </span>
+                          </span>
+                        );
+                      })}
+                    </div>
                     <span className="record-history-time">
                       {new Date(row.eventTime).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
                     </span>
