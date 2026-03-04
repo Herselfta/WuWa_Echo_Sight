@@ -1336,53 +1336,37 @@ export function RecordPage() {
           {/* 最近事件 */}
           <div className="card record-card record-history-card">
             <div className="record-card-header" style={{ marginBottom: 12 }}>
-              <div className="inline-row" style={{ width: "100%", justifyContent: "space-between" }}>
-                <span className="record-section-title">最近录入</span>
-                <div className="inline-row" style={{ gap: 8, fontSize: 13, fontWeight: "normal" }}>
-                  <label className="inline-row" style={{ gap: 4 }}>
-                    <input
-                      type="checkbox"
-                      checked={historyTodayOnly}
-                      onChange={(e) => setHistoryTodayOnly(e.target.checked)}
-                    />
-                    仅限今日
-                  </label>
-                  <label className="inline-row" style={{ gap: 4 }}>
-                    上限:
-                    <input
-                      type="number"
-                      style={{ width: 48 }}
-                      min={1}
-                      value={historyLimitStr}
-                      onChange={(e) => setHistoryLimitStr(e.target.value)}
-                    />
-                  </label>
-                </div>
-              </div>
+              <span className="record-section-title" style={{ whiteSpace: "nowrap" }}>最近录入</span>
 
-              {/* 查找工具栏 */}
+              {/* 查找工具栏 - 嵌入标题行 */}
               <div className="record-history-search-bar">
-                <span className="record-field-label" style={{ whiteSpace: "nowrap" }}>查找：</span>
-                <div className="chain-row" style={{ padding: 0, minHeight: 28 }}>
+                <span style={{ fontSize: 14, cursor: "default" }} title="查找记录">🔍</span>
+                <div className="chain-row" style={{ padding: 0, minHeight: 24 }}>
                   {searchStats.map((sk, idx) => {
-                    const st = statMap.get(sk);
                     return (
                       <div
                         key={idx} className="chain-item"
+                        style={{ padding: "0 4px" }}
                         onContextMenu={(e) => { e.preventDefault(); setSearchStats(prev => prev.filter((_, i) => i !== idx)); }}
-                        onClick={() => {
-                          const nextIdx = (statDefs.findIndex(s => s.statKey === sk) + 1) % statDefs.length;
-                          const nextSk = statDefs[nextIdx].statKey;
-                          setSearchStats(prev => prev.map((item, i) => i === idx ? nextSk : item));
-                        }}
-                        title="点击快速切换，右键删除"
+                        title="右键删除"
                       >
-                        {st?.displayName ?? sk}
+                        <select
+                          value={sk}
+                          onChange={(e) => {
+                            const nextSk = e.target.value;
+                            setSearchStats(prev => prev.map((item, i) => i === idx ? nextSk : item));
+                          }}
+                        >
+                          {statDefs.map(s => (
+                            <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
+                          ))}
+                        </select>
                       </div>
                     );
                   })}
                   <button
                     type="button" className="chain-add"
+                    style={{ height: 20, width: 20, minWidth: 20 }}
                     onClick={() => {
                       const firstAvail = statDefs[0].statKey;
                       setSearchStats(prev => [...prev, firstAvail]);
@@ -1390,15 +1374,46 @@ export function RecordPage() {
                   >+</button>
                 </div>
                 {searchStats.length > 0 && (
-                  <div className="inline-row" style={{ marginLeft: "auto", gap: 4 }}>
+                  <div className="inline-row" style={{ gap: 4 }}>
                     <span className="record-history-match-info">
-                      {matchIndices.length > 0 ? `${currentMatchIdx + 1} / ${matchIndices.length}` : "无匹配"}
+                      {matchIndices.length > 0 ? `${currentMatchIdx + 1}/${matchIndices.length}` : "0"}
                     </span>
-                    <button type="button" className="record-history-jump-btn" onClick={() => jumpToMatch("prev")}>↑</button>
-                    <button type="button" className="record-history-jump-btn" onClick={() => jumpToMatch("next")}>↓</button>
+                    <div className="inline-row" style={{ gap: 2 }}>
+                      <button type="button" className="record-history-jump-btn" onClick={() => jumpToMatch("prev")}>↑</button>
+                      <span className="record-history-dist-num">
+                        {currentMatchIdx > 0 ? matchIndices[currentMatchIdx] - matchIndices[currentMatchIdx - 1] : "-"}
+                      </span>
+                    </div>
+                    <div className="inline-row" style={{ gap: 2 }}>
+                      <button type="button" className="record-history-jump-btn" onClick={() => jumpToMatch("next")}>↓</button>
+                      <span className="record-history-dist-num">
+                        {currentMatchIdx < matchIndices.length - 1 ? matchIndices[currentMatchIdx + 1] - matchIndices[currentMatchIdx] : "-"}
+                      </span>
+                    </div>
                     <button type="button" className="record-history-jump-btn" onClick={() => setSearchStats([])}>✕</button>
                   </div>
                 )}
+              </div>
+
+              <div className="inline-row" style={{ gap: 8, fontSize: 13, fontWeight: "normal", flexShrink: 0 }}>
+                <label className="inline-row" style={{ gap: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={historyTodayOnly}
+                    onChange={(e) => setHistoryTodayOnly(e.target.checked)}
+                  />
+                  仅限今日
+                </label>
+                <label className="inline-row" style={{ gap: 4 }}>
+                  上限:
+                  <input
+                    type="number"
+                    style={{ width: 44 }}
+                    min={1}
+                    value={historyLimitStr}
+                    onChange={(e) => setHistoryLimitStr(e.target.value)}
+                  />
+                </label>
               </div>
             </div>
 

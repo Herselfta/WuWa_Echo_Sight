@@ -1625,20 +1625,45 @@ button:hover {
 }
 
 .record-history-card .record-card-header {
-  flex-direction: column;
-  align-items: flex-start !important;
-  gap: 8px;
+  flex-direction: row;
+  align-items: center !important;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .record-history-search-bar {
-  width: 100%;
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: #f8fafc;
-  padding: 4px 8px;
+  padding: 2px 6px;
   border-radius: 6px;
   border: 1px solid var(--line);
+  min-width: 0;
+}
+
+.record-history-search-bar .chain-row {
+  flex: 1;
+  overflow: visible;
+}
+
+.record-history-search-bar select {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  color: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+.record-history-dist-num {
+  font-size: 10px;
+  color: var(--accent);
+  min-width: 12px;
+  text-align: center;
+  font-family: monospace;
 }
 
 .record-history-item {
