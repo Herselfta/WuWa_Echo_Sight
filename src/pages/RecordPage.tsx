@@ -1340,7 +1340,14 @@ export function RecordPage() {
 
               {/* 查找工具栏 - 嵌入标题行 */}
               <div className="record-history-search-bar">
-                <span style={{ fontSize: 14, cursor: "default" }} title="查找记录">🔍</span>
+                <svg
+                  width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ opacity: 0.5, flexShrink: 0 }}
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
                 <div className="chain-row" style={{ padding: 0, minHeight: 24 }}>
                   {searchStats.map((sk, idx) => {
                     return (
@@ -1402,13 +1409,13 @@ export function RecordPage() {
                     checked={historyTodayOnly}
                     onChange={(e) => setHistoryTodayOnly(e.target.checked)}
                   />
-                  仅限今日
+                  仅今日
                 </label>
-                <label className="inline-row" style={{ gap: 4 }}>
-                  上限:
+                <label className="inline-row" style={{ gap: 2 }}>
+                  限:
                   <input
                     type="number"
-                    style={{ width: 44 }}
+                    style={{ width: 55 }}
                     min={1}
                     value={historyLimitStr}
                     onChange={(e) => setHistoryLimitStr(e.target.value)}
