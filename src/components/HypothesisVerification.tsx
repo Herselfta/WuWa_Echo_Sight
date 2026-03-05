@@ -411,9 +411,14 @@ function ReversionPanel({
         <button
           type="button"
           onClick={() => onSetSelectedStats(defaultKeys)}
+          aria-label="恢复默认"
           style={{
-            fontSize: 11,
-            padding: "2px 8px",
+            width: 28,
+            height: 22,
+            padding: 0,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
             borderRadius: 4,
             border: "1px dashed var(--line)",
             background: "var(--panel)",
@@ -422,37 +427,49 @@ function ReversionPanel({
           }}
           title="恢复默认：前 5 个高频词条"
         >
-          恢复默认
+          <span style={{ fontSize: 20, lineHeight: 1, display: "inline-block", transform: "translateY(-1px)" }}>↺</span>
         </button>
         <button
           type="button"
           onClick={() => onSetSelectedStats(allKeys)}
+          aria-label="全选"
           style={{
-            fontSize: 11,
-            padding: "2px 8px",
+            width: 28,
+            height: 22,
+            padding: 0,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
             borderRadius: 4,
             border: "1px dashed var(--line)",
             background: "var(--panel)",
             color: "var(--ink)",
             cursor: "pointer",
           }}
+          title="全选当前词条"
         >
-          全选
+          <span style={{ fontSize: 20, lineHeight: 1, display: "inline-block", transform: "translateY(-1px)" }}>☑</span>
         </button>
         <button
           type="button"
           onClick={() => onSetSelectedStats([])}
+          aria-label="清空"
           style={{
-            fontSize: 11,
-            padding: "2px 8px",
+            width: 28,
+            height: 22,
+            padding: 0,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
             borderRadius: 4,
             border: "1px dashed var(--line)",
             background: "var(--panel)",
             color: "var(--ink)",
             cursor: "pointer",
           }}
+          title="清空当前选择"
         >
-          清空
+          <span style={{ fontSize: 14, lineHeight: 1 }}>✕</span>
         </button>
       </div>
 
