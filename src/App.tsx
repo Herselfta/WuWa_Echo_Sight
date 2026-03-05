@@ -8,15 +8,15 @@ import { useAppStore } from "./store/useAppStore";
 type TabKey = "record" | "echoPool" | "analysis";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
-  { key: "record", label: "统一看板" },
-  { key: "echoPool", label: "声骸池管理" },
-  { key: "analysis", label: "数据工具" },
+  { key: "record", label: "工作台" },
+  { key: "echoPool", label: "声骸池" },
+  { key: "analysis", label: "数据库" },
 ];
 
 const TAB_NOTES: Record<TabKey, string> = {
-  record: "在同一页完成新增声骸、强化录入与实时概率观察。",
-  echoPool: "集中处理已有声骸的资料维护、补录与误录删除。",
-  analysis: "用于快照、导出和历史事件修正。",
+  record: "统一新增声骸、强化录入与数据观察&分析。",
+  echoPool: "集中处理已有声骸的数据维护。",
+  analysis: "用于数据导入/导出和历史事件修正。",
 };
 
 function App() {

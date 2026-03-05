@@ -2016,6 +2016,10 @@ button:hover {
   margin-bottom: 6px;
 }
 
+.record-board-main-header {
+  justify-content: flex-start;
+}
+
 .record-card-meta {
   font-size: 11px;
   color: var(--muted);

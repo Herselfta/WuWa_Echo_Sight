@@ -1703,28 +1703,25 @@ export function RecordPage() {
       {/* ═══ 实时分析区 ═══ */}
       <div className="record-analysis">
         <div className="card record-card record-board-shell">
-          <div className="record-card-header">
-            <span className="record-section-title">智能看板</span>
-            <span className="record-card-meta">
-              {boardSurfaceTab === "analysis" ? "统计分析视图" : "模式决策视图"}
-            </span>
+          <div className="record-card-header record-board-main-header">
+            <span className="record-section-title">数据处理</span>
+            <nav className="tab-nav">
+              <button
+                type="button"
+                className={`tab-btn${boardSurfaceTab === "analysis" ? " active" : ""}`}
+                onClick={() => setBoardSurfaceTab("analysis")}
+              >
+                分析
+              </button>
+              <button
+                type="button"
+                className={`tab-btn${boardSurfaceTab === "decision" ? " active" : ""}`}
+                onClick={() => setBoardSurfaceTab("decision")}
+              >
+                决策
+              </button>
+            </nav>
           </div>
-          <nav className="tab-nav">
-            <button
-              type="button"
-              className={`tab-btn${boardSurfaceTab === "analysis" ? " active" : ""}`}
-              onClick={() => setBoardSurfaceTab("analysis")}
-            >
-              分析页面
-            </button>
-            <button
-              type="button"
-              className={`tab-btn${boardSurfaceTab === "decision" ? " active" : ""}`}
-              onClick={() => setBoardSurfaceTab("decision")}
-            >
-              决策页面
-            </button>
-          </nav>
           <div className="record-board-content">
         {boardSurfaceTab === "analysis" ? (
           <div className="record-analysis-page-frame">

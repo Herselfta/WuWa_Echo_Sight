@@ -31,7 +31,6 @@ export function AnalysisPage() {
   const [reorderMode, setReorderMode] = useState<"none" | "time_assist">("none");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [importZipPath, setImportZipPath] = useState("");
 
   const loadEvents = async () => {
     const rows = await getEventHistory({ limit: 200 });
@@ -76,31 +75,19 @@ export function AnalysisPage() {
     }
   };
 
-  const snapshot = async () => {
-    setLoading(true);
-    setMessage("");
-    try {
-      const result = await createProbabilitySnapshot({
-        scope: distributionFilter,
-        statKey: selectedStatKey ?? undefined,
-      });
-      setMessage(`快照创建成功: ${result.snapshotId}`);
-    } catch (error) {
-      setMessage(String(error));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const doExport = async () => {
     setLoading(true);
     setMessage("");
     try {
+      const snapshot = await createProbabilitySnapshot({
+        scope: distributionFilter,
+        statKey: selectedStatKey ?? undefined,
+      });
       const result = await exportCsv({
         scope: distributionFilter,
         includeSnapshots: true,
       });
-      setMessage(`CSV 已导出: ${result.zipPath}`);
+      setMessage(`CSV 已导出: ${result.zipPath}（自动快照: ${snapshot.snapshotId.slice(0, 8)}）`);
     } catch (error) {
       setMessage(String(error));
     } finally {
@@ -108,18 +95,23 @@ export function AnalysisPage() {
     }
   };
 
-  const doImport = async () => {
-    if (!importZipPath.trim()) {
-      setMessage("请先输入 zip 文件路径。");
-      return;
-    }
-    if (!window.confirm("导入会覆盖当前记录数据，确认继续？")) {
-      return;
-    }
-    setLoading(true);
+  const pickAndImportZip = async () => {
     setMessage("");
     try {
-      const result = await importData(importZipPath.trim());
+      const selected = await open({
+        title: "选择导入 ZIP 文件",
+        multiple: false,
+        directory: false,
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+      });
+      if (typeof selected !== "string") {
+        return;
+      }
+      if (!window.confirm("导入会覆盖当前记录数据，确认继续？")) {
+        return;
+      }
+      setLoading(true);
+      const result = await importData(selected);
       await loadBootData();
       await loadEvents();
       setMessage(`导入完成，表：${result.importedTables.join(", ") || "无"}`);
@@ -130,42 +122,14 @@ export function AnalysisPage() {
     }
   };
 
-  const pickImportZip = async () => {
-    setMessage("");
-    try {
-      const selected = await open({
-        title: "选择导入 ZIP 文件",
-        multiple: false,
-        directory: false,
-        filters: [{ name: "ZIP", extensions: ["zip"] }],
-      });
-      if (typeof selected === "string") {
-        setImportZipPath(selected);
-      }
-    } catch (error) {
-      setMessage(String(error));
-    }
-  };
-
   return (
     <section className="page">
       <div className="card inline-row">
-        <button type="button" onClick={() => void snapshot()} disabled={loading}>
-          生成概率快照
-        </button>
         <button type="button" onClick={() => void doExport()} disabled={loading}>
           导出 CSV(zip)
         </button>
-        <input
-          value={importZipPath}
-          onChange={(e) => setImportZipPath(e.target.value)}
-          placeholder="导入 zip 绝对路径"
-        />
-        <button type="button" onClick={() => void pickImportZip()} disabled={loading}>
-          选择 zip
-        </button>
-        <button type="button" onClick={() => void doImport()} disabled={loading}>
-          导入数据
+        <button type="button" onClick={() => void pickAndImportZip()} disabled={loading}>
+          选择并导入 zip
         </button>
       </div>
 
