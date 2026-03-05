@@ -1745,7 +1745,7 @@ export function RecordPage() {
                 className={`tab-btn${analysisViewTab === "streak" ? " active" : ""}`}
                 onClick={() => setAnalysisViewTab("streak")}
               >
-                区间/连档
+                区间/档位
               </button>
               <button
                 type="button"
