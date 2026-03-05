@@ -1903,6 +1903,23 @@ button:hover {
   margin: 0;
 }
 
+.reversion-two-col {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.reversion-half-panel {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
 .record-filter-bar {
   display: flex;
   align-items: center;
@@ -2095,6 +2112,10 @@ button:hover {
   }
 
   .record-analysis-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .reversion-two-col {
     grid-template-columns: 1fr;
   }
 

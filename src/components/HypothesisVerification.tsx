@@ -411,91 +411,93 @@ function ReversionPanel({
         <DeviationChart totalEvents={data.totalEvents} series={selected} />
       )}
 
-      {/* Gap statistics table */}
-      <div style={{ overflowX: "auto", marginTop: 14 }}>
-        <strong style={{ fontSize: 13 }}>到达间隔统计（均值回归判断）</strong>
-        <p style={{ fontSize: 11, color: "var(--ink-dim)", margin: "2px 0 6px" }}>
-          离散指数 = Var/Mean。几何分布基准 ≈ (1-p)/p。若实际 &lt; 基准 → 均匀化（均值回归）；若 &gt; 基准 → 聚集爆发。
-        </p>
-        <table className="compact-table table" style={{ fontSize: 12 }}>
-          <thead>
-            <tr>
-              <th>词条</th>
-              <th>出现次数</th>
-              <th>基准频率</th>
-              <th>实际均值间隔</th>
-              <th>期望间隔 (i.i.d.)</th>
-              <th>间隔方差</th>
-              <th>离散指数</th>
-              <th>几何基准</th>
-              <th>判断</th>
-            </tr>
-          </thead>
-          <tbody>
-            {active.map((s) => {
-              const hasGaps = s.gaps.length >= 2;
-              const di = hasGaps ? s.dispersionIndex : null;
-              const gd = s.geometricDispersion;
-              let verdict = "—";
-              let color = "inherit";
-              if (di !== null && !isNaN(di) && !isNaN(gd)) {
-                if (di < gd * 0.7) { verdict = "✓ 均匀化"; color = "var(--ok, #27ae60)"; }
-                else if (di > gd * 1.4) { verdict = "⚠ 聚集爆发"; color = "var(--danger, #e74c3c)"; }
-                else { verdict = "≈ 随机"; }
-              }
-              return (
-                <tr key={s.statKey}>
-                  <td>{s.displayName}</td>
-                  <td>{s.totalCount}</td>
-                  <td>{(s.baseFreq * 100).toFixed(1)}%</td>
-                  <td>{s.meanGap > 0 ? s.meanGap.toFixed(1) : "—"}</td>
-                  <td>{s.expectedGap > 0 ? s.expectedGap.toFixed(1) : "—"}</td>
-                  <td>{hasGaps && !isNaN(s.gapVariance) ? s.gapVariance.toFixed(1) : "—"}</td>
-                  <td>{di !== null && !isNaN(di) ? di.toFixed(2) : "—"}</td>
-                  <td>{!isNaN(gd) ? gd.toFixed(2) : "—"}</td>
-                  <td style={{ color }}>{verdict}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <div className="reversion-two-col">
+        {/* Gap statistics table */}
+        <div className="reversion-half-panel">
+          <strong style={{ fontSize: 13 }}>到达间隔统计（均值回归判断）</strong>
+          <p style={{ fontSize: 11, color: "var(--ink-dim)", margin: "2px 0 6px" }}>
+            离散指数 = Var/Mean。几何分布基准 ≈ (1-p)/p。若实际 &lt; 基准 → 均匀化（均值回归）；若 &gt; 基准 → 聚集爆发。
+          </p>
+          <table className="compact-table table" style={{ fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th>词条</th>
+                <th>出现次数</th>
+                <th>基准频率</th>
+                <th>实际均值间隔</th>
+                <th>期望间隔 (i.i.d.)</th>
+                <th>间隔方差</th>
+                <th>离散指数</th>
+                <th>几何基准</th>
+                <th>判断</th>
+              </tr>
+            </thead>
+            <tbody>
+              {active.map((s) => {
+                const hasGaps = s.gaps.length >= 2;
+                const di = hasGaps ? s.dispersionIndex : null;
+                const gd = s.geometricDispersion;
+                let verdict = "—";
+                let color = "inherit";
+                if (di !== null && !isNaN(di) && !isNaN(gd)) {
+                  if (di < gd * 0.7) { verdict = "✓ 均匀化"; color = "var(--ok, #27ae60)"; }
+                  else if (di > gd * 1.4) { verdict = "⚠ 聚集爆发"; color = "var(--danger, #e74c3c)"; }
+                  else { verdict = "≈ 随机"; }
+                }
+                return (
+                  <tr key={s.statKey}>
+                    <td>{s.displayName}</td>
+                    <td>{s.totalCount}</td>
+                    <td>{(s.baseFreq * 100).toFixed(1)}%</td>
+                    <td>{s.meanGap > 0 ? s.meanGap.toFixed(1) : "—"}</td>
+                    <td>{s.expectedGap > 0 ? s.expectedGap.toFixed(1) : "—"}</td>
+                    <td>{hasGaps && !isNaN(s.gapVariance) ? s.gapVariance.toFixed(1) : "—"}</td>
+                    <td>{di !== null && !isNaN(di) ? di.toFixed(2) : "—"}</td>
+                    <td>{!isNaN(gd) ? gd.toFixed(2) : "—"}</td>
+                    <td style={{ color }}>{verdict}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
 
-      {/* Lag autocorrelation table */}
-      <div style={{ overflowX: "auto", marginTop: 14 }}>
-        <strong style={{ fontSize: 13 }}>滞后自相关（负值 = 负反馈均值回归）</strong>
-        <p style={{ fontSize: 11, color: "var(--ink-dim)", margin: "2px 0 6px" }}>
-          Lag-5 ≈ 1 声骸，Lag-10 ≈ 2 声骸。数据少时置信度低。
-        </p>
-        <table className="compact-table table" style={{ fontSize: 12 }}>
-          <thead>
-            <tr>
-              <th>词条</th>
-              <th>Lag-1</th>
-              <th>Lag-5</th>
-              <th>Lag-10</th>
-              <th>Lag-13</th>
-            </tr>
-          </thead>
-          <tbody>
-            {active.map((s) => {
-              const ac: Record<number, number> = {};
-              for (const [lag, v] of s.lagAutocorrs) ac[lag] = v;
-              const cell = (lag: number) => {
-                const v = ac[lag];
-                if (v === undefined) return <td>—</td>;
-                const color = v < -0.15 ? "var(--ok, #27ae60)" : v > 0.25 ? "var(--danger, #e74c3c)" : "inherit";
-                return <td style={{ color }}>{v.toFixed(3)}</td>;
-              };
-              return (
-                <tr key={s.statKey}>
-                  <td>{s.displayName}</td>
-                  {cell(1)}{cell(5)}{cell(10)}{cell(13)}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {/* Lag autocorrelation table */}
+        <div className="reversion-half-panel">
+          <strong style={{ fontSize: 13 }}>滞后自相关（负值 = 负反馈均值回归）</strong>
+          <p style={{ fontSize: 11, color: "var(--ink-dim)", margin: "2px 0 6px" }}>
+            Lag-5 ≈ 1 声骸，Lag-10 ≈ 2 声骸。数据少时置信度低。
+          </p>
+          <table className="compact-table table" style={{ fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th>词条</th>
+                <th>Lag-1</th>
+                <th>Lag-5</th>
+                <th>Lag-10</th>
+                <th>Lag-13</th>
+              </tr>
+            </thead>
+            <tbody>
+              {active.map((s) => {
+                const ac: Record<number, number> = {};
+                for (const [lag, v] of s.lagAutocorrs) ac[lag] = v;
+                const cell = (lag: number) => {
+                  const v = ac[lag];
+                  if (v === undefined) return <td>—</td>;
+                  const color = v < -0.15 ? "var(--ok, #27ae60)" : v > 0.25 ? "var(--danger, #e74c3c)" : "inherit";
+                  return <td style={{ color }}>{v.toFixed(3)}</td>;
+                };
+                return (
+                  <tr key={s.statKey}>
+                    <td>{s.displayName}</td>
+                    {cell(1)}{cell(5)}{cell(10)}{cell(13)}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Window conditional table */}
