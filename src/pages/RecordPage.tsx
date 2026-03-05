@@ -80,6 +80,27 @@ function parseGuessShapes(raw: string): string[] {
   return Array.from(uniq);
 }
 
+const BEIJING_TZ = "Asia/Shanghai";
+const GAME_DAY_BOUNDARY_HOUR = 4;
+
+function formatBeijingDay(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: BEIJING_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function computeBeijingGameDayFromDate(date: Date): string {
+  const shifted = new Date(date.getTime() - GAME_DAY_BOUNDARY_HOUR * 60 * 60 * 1000);
+  return formatBeijingDay(shifted);
+}
+
+function computeBeijingGameDayFromIso(iso: string): string {
+  return computeBeijingGameDayFromDate(new Date(iso));
+}
+
 /* ── chain helpers (same logic as EchoPoolPage) ───── */
 
 function buildExpectationChain(items: ExpectationItem[]) {
@@ -221,11 +242,15 @@ export function RecordPage() {
   const [tierIndex, setTierIndex] = useState<number>(1);
   const [eventTimeLocal, setEventTimeLocal] = useState<string>(toLocalInputValue(new Date()));
   const [eventHistory, setEventHistory] = useState<EventRow[]>([]);
+  const [historyDatePopoverOpen, setHistoryDatePopoverOpen] = useState(false);
+  const [historyDateAnchorIdx, setHistoryDateAnchorIdx] = useState<number | null>(null);
+  const historyDateFilterRef = useRef<HTMLDivElement | null>(null);
   
   const { recordPageDraft, patchRecordPageDraft } = useAppStore();
-  const { historyLimitStr, historyTodayOnly } = recordPageDraft;
+  const { historyLimitStr, historySelectedGameDay } = recordPageDraft;
   const setHistoryLimitStr = (val: string) => patchRecordPageDraft({ historyLimitStr: val });
-  const setHistoryTodayOnly = (val: boolean) => patchRecordPageDraft({ historyTodayOnly: val });
+  const setHistorySelectedGameDays = (val: string[]) =>
+    patchRecordPageDraft({ historySelectedGameDay: val });
 
   /* === distribution / analysis === */
   const [distributionFilter, setDistributionFilter] = useState<DistributionFilter>({});
@@ -359,6 +384,24 @@ export function RecordPage() {
     return () => window.removeEventListener("pointerdown", handler);
   }, [createPresetSelectorOpen, createPresetNamingOpen]);
 
+  useEffect(() => {
+    if (!historyDatePopoverOpen) return;
+    const handler = (e: PointerEvent) => {
+      if (!(e.target instanceof Node)) return;
+      if (historyDateFilterRef.current?.contains(e.target)) return;
+      setHistoryDatePopoverOpen(false);
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHistoryDatePopoverOpen(false);
+    };
+    window.addEventListener("pointerdown", handler);
+    window.addEventListener("keydown", handleEsc);
+    return () => {
+      window.removeEventListener("pointerdown", handler);
+      window.removeEventListener("keydown", handleEsc);
+    };
+  }, [historyDatePopoverOpen]);
+
   // auto-focus naming input & track position
   useEffect(() => {
     if (!createPresetNamingOpen) return;
@@ -417,9 +460,30 @@ export function RecordPage() {
   });
 
   const parsedHistoryLimit = parseInt(historyLimitStr, 10) || 20;
+  const currentBeijingGameDay = computeBeijingGameDayFromDate(new Date());
+  const normalizedSelectedGameDays = useMemo(() => {
+    if (Array.isArray(historySelectedGameDay)) {
+      return historySelectedGameDay.filter((x) => !!x);
+    }
+    if (historySelectedGameDay) {
+      return [historySelectedGameDay];
+    }
+    return [];
+  }, [historySelectedGameDay]);
+  const effectiveSelectedGameDays = normalizedSelectedGameDays.length > 0
+    ? normalizedSelectedGameDays
+    : [currentBeijingGameDay];
+  const selectedGameDaySet = useMemo(
+    () => new Set(normalizedSelectedGameDays),
+    [normalizedSelectedGameDays],
+  );
+  const effectiveSelectedGameDaySet = useMemo(
+    () => new Set(effectiveSelectedGameDays),
+    [effectiveSelectedGameDays],
+  );
 
-  const loadHistory = async (limit = parsedHistoryLimit, todayOnly = historyTodayOnly) => {
-    const fetchLimit = todayOnly ? Math.max(200, limit * 3) : Math.max(100, limit);
+  const loadHistory = async () => {
+    const fetchLimit = 5000;
     const rows = await getEventHistory({ limit: fetchLimit });
     setEventHistory(rows);
   };
@@ -470,7 +534,7 @@ export function RecordPage() {
   useEffect(() => { void loadDistribution(); }, []);
   useEffect(() => { void loadPatternDecision(); }, [patternConfigVersion]);
   // history fetching
-  useEffect(() => { void loadHistory(parsedHistoryLimit, historyTodayOnly); }, [parsedHistoryLimit, historyTodayOnly]);
+  useEffect(() => { void loadHistory(); }, []);
 
   useEffect(() => { void loadDistribution(); setSelectedDistStatKey(null); setEchoProbRows([]); }, [
     distributionFilter.startTime, distributionFilter.endTime,
@@ -937,21 +1001,74 @@ export function RecordPage() {
 
   /* ── main render ───────────────── */
 
-  const displayedHistory = useMemo(() => {
-    let list = eventHistory;
-    if (historyTodayOnly) {
-      const now = new Date();
-      // "Today" starts at 4:00 AM local time
-      const boundary = new Date(now);
-      boundary.setHours(4, 0, 0, 0);
-      // If it's currently before 4:00 AM, the boundary is yesterday's 4:00 AM
-      if (now < boundary) {
-        boundary.setDate(boundary.getDate() - 1);
-      }
-      list = list.filter((r) => new Date(r.eventTime) >= boundary);
+  const historyGameDayOptions = useMemo(() => {
+    const set = new Set<string>();
+    set.add(currentBeijingGameDay);
+    for (const day of normalizedSelectedGameDays) {
+      set.add(day);
     }
-    return list.slice(0, parsedHistoryLimit);
-  }, [eventHistory, historyTodayOnly, parsedHistoryLimit]);
+    for (const row of eventHistory) {
+      set.add(computeBeijingGameDayFromIso(row.eventTime));
+    }
+    return Array.from(set).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  }, [eventHistory, currentBeijingGameDay, normalizedSelectedGameDays]);
+
+  useEffect(() => {
+    if (historyDateAnchorIdx === null) return;
+    if (historyDateAnchorIdx >= historyGameDayOptions.length) {
+      setHistoryDateAnchorIdx(null);
+    }
+  }, [historyDateAnchorIdx, historyGameDayOptions.length]);
+
+  const historyDateTriggerLabel = useMemo(() => {
+    if (normalizedSelectedGameDays.length === 0) {
+      return `${currentBeijingGameDay}（默认今日）`;
+    }
+    if (normalizedSelectedGameDays.length === 1) {
+      const day = normalizedSelectedGameDays[0];
+      return day === currentBeijingGameDay ? `${day}（今日）` : day;
+    }
+    return `已选 ${normalizedSelectedGameDays.length} 天`;
+  }, [normalizedSelectedGameDays, currentBeijingGameDay]);
+
+  const applyHistorySelectedDays = (selectedSet: Set<string>) => {
+    setHistorySelectedGameDays(historyGameDayOptions.filter((day) => selectedSet.has(day)));
+  };
+
+  const onHistoryDateOptionClick = (day: string, idx: number, shiftKey: boolean) => {
+    const selectedSet = new Set(normalizedSelectedGameDays);
+    if (
+      shiftKey &&
+      historyDateAnchorIdx !== null &&
+      historyDateAnchorIdx >= 0 &&
+      historyDateAnchorIdx < historyGameDayOptions.length
+    ) {
+      const start = Math.min(historyDateAnchorIdx, idx);
+      const end = Math.max(historyDateAnchorIdx, idx);
+      const rangeDays = historyGameDayOptions.slice(start, end + 1);
+      const shouldUnselect = rangeDays.every((item) => selectedSet.has(item));
+      for (const item of rangeDays) {
+        if (shouldUnselect) {
+          selectedSet.delete(item);
+        } else {
+          selectedSet.add(item);
+        }
+      }
+    } else if (selectedSet.has(day)) {
+      selectedSet.delete(day);
+    } else {
+      selectedSet.add(day);
+    }
+    setHistoryDateAnchorIdx(idx);
+    applyHistorySelectedDays(selectedSet);
+  };
+
+  const displayedHistory = useMemo(() => {
+    const filtered = eventHistory.filter(
+      (r) => effectiveSelectedGameDaySet.has(computeBeijingGameDayFromIso(r.eventTime)),
+    );
+    return filtered.slice(0, parsedHistoryLimit);
+  }, [eventHistory, effectiveSelectedGameDaySet, parsedHistoryLimit]);
 
   /* === history search === */
   const [searchStats, setSearchStats] = useState<string[]>([]);
@@ -1372,16 +1489,16 @@ export function RecordPage() {
           </form>
         </div>
 
-        {/* ── 右：最近录入 ── */}
+        {/* ── 右：强化记录 ── */}
         <div className="record-col-event">
 
         {/* ── 右：强化录入 ── */}
 
 
-          {/* 最近事件 */}
+          {/* 强化事件 */}
           <div className="card record-card record-history-card">
             <div className="record-card-header" style={{ marginBottom: 12 }}>
-              <span className="record-section-title" style={{ whiteSpace: "nowrap" }}>最近录入</span>
+              <span className="record-section-title" style={{ whiteSpace: "nowrap" }}>强化记录</span>
 
               {/* 查找工具栏 - 嵌入标题行 */}
               <div className="record-history-search-bar">
@@ -1469,14 +1586,64 @@ export function RecordPage() {
               </div>
 
               <div className="inline-row" style={{ gap: 8, fontSize: 13, fontWeight: "normal", flexShrink: 0 }}>
-                <label className="inline-row" style={{ gap: 4 }}>
-                  <input
-                    type="checkbox"
-                    checked={historyTodayOnly}
-                    onChange={(e) => setHistoryTodayOnly(e.target.checked)}
-                  />
-                  仅今日
-                </label>
+                <div className="record-history-date-filter" ref={historyDateFilterRef}>
+                  <button
+                    type="button"
+                    className={`record-history-date-trigger ${historyDatePopoverOpen ? "manage-btn-active" : ""}`}
+                    onClick={() => setHistoryDatePopoverOpen((v) => !v)}
+                  >
+                    日期: {historyDateTriggerLabel}
+                  </button>
+                  {historyDatePopoverOpen ? (
+                    <div className="record-history-date-pop-shell">
+                      <div className="record-history-date-pop">
+                        <div className="record-history-date-pop-list" role="listbox" aria-multiselectable="true">
+                          {historyGameDayOptions.map((day, idx) => {
+                            const isSelected = selectedGameDaySet.has(day);
+                            return (
+                              <button
+                                key={day}
+                                type="button"
+                                role="option"
+                                aria-selected={isSelected}
+                                className={`record-history-date-option ${isSelected ? "is-selected" : ""}`}
+                                title="点击切换；Shift+点击可区间选择"
+                                onClick={(e) => onHistoryDateOptionClick(day, idx, e.shiftKey)}
+                              >
+                                <span>{day === currentBeijingGameDay ? `${day}（今日）` : day}</span>
+                                <span className="record-history-date-check" aria-hidden="true">
+                                  {isSelected ? "✓" : ""}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="record-history-date-side-actions">
+                        <button
+                          type="button"
+                          className="record-history-jump-btn"
+                          onClick={() => {
+                            setHistoryDateAnchorIdx(historyGameDayOptions.indexOf(currentBeijingGameDay));
+                            setHistorySelectedGameDays([currentBeijingGameDay]);
+                          }}
+                        >
+                          今日
+                        </button>
+                        <button
+                          type="button"
+                          className="record-history-jump-btn"
+                          onClick={() => {
+                            setHistoryDateAnchorIdx(historyGameDayOptions.length > 0 ? 0 : null);
+                            setHistorySelectedGameDays(historyGameDayOptions);
+                          }}
+                        >
+                          全选
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
                 <label className="inline-row" style={{ gap: 2 }}>
                   限:
                   <input
@@ -1556,7 +1723,9 @@ export function RecordPage() {
                 );
               })}
               {eventHistory.length === 0 ? (
-                <span className="chain-empty" style={{ padding: "12px" }}>暂无录入记录</span>
+                <span className="chain-empty" style={{ padding: "12px" }}>暂无强化记录</span>
+              ) : displayedHistory.length === 0 ? (
+                <span className="chain-empty" style={{ padding: "12px" }}>该日期暂无强化记录</span>
               ) : null}
             </div>
           </div>

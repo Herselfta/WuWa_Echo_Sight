@@ -30,7 +30,7 @@ interface CreateFormDraft {
 
 interface RecordPageDraft {
   historyLimitStr: string;
-  historyTodayOnly: boolean;
+  historySelectedGameDay: string | string[];
 }
 
 interface AppState {
@@ -79,7 +79,7 @@ export const useAppStore = create<AppState>()(
   },
   recordPageDraft: {
     historyLimitStr: "20",
-    historyTodayOnly: false,
+    historySelectedGameDay: [],
   },
   echoProbRows: [],
   distributionFilter: {},
