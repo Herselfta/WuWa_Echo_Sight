@@ -5,7 +5,6 @@ import type {
   CategoryStreakReport,
   DistributionFilter,
   DistributionPayload,
-  EchoProbRow,
   EchoSummary,
   ExpectationPreset,
   EventRow,
@@ -116,21 +115,8 @@ export async function getGlobalDistribution(filter?: DistributionFilter): Promis
   return invoke("get_global_distribution", { filter });
 }
 
-export async function getEchoesForStat(input: {
-  statKey: string;
-  sortBy?: string;
-  startTime?: string;
-  endTime?: string;
-  mainStatKey?: string;
-  costClass?: number;
-  status?: string;
-}): Promise<EchoProbRow[]> {
-  return invoke("get_echoes_for_stat", { filter: input });
-}
-
 export async function createProbabilitySnapshot(input: {
   scope: DistributionFilter;
-  statKey?: string;
 }): Promise<{ snapshotId: string }> {
   return invoke("create_probability_snapshot", { input });
 }

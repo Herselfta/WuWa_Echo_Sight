@@ -21,7 +21,7 @@ function toLocalInputValue(iso: string): string {
 }
 
 export function DataToolsPage() {
-  const { distributionFilter, selectedStatKey, loadBootData } = useAppStore();
+  const { distributionFilter, loadBootData } = useAppStore();
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventId, setEventId] = useState("");
   const [slotNo, setSlotNo] = useState("");
@@ -81,7 +81,6 @@ export function DataToolsPage() {
     try {
       const snapshot = await createProbabilitySnapshot({
         scope: distributionFilter,
-        statKey: selectedStatKey ?? undefined,
       });
       const result = await exportCsv({
         scope: distributionFilter,

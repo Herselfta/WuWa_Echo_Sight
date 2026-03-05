@@ -249,35 +249,8 @@ pub struct DistributionPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EchoProbFilter {
-    pub stat_key: String,
-    pub sort_by: Option<String>,
-    pub start_time: Option<String>,
-    pub end_time: Option<String>,
-    pub main_stat_key: Option<String>,
-    pub cost_class: Option<i64>,
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EchoProbRow {
-    pub echo_id: String,
-    pub nickname: Option<String>,
-    pub main_stat_key: String,
-    pub cost_class: i64,
-    pub status: String,
-    pub opened_slots_count: i64,
-    pub expectation_rank_min: i64,
-    pub p_next: f64,
-    pub p_final: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateProbabilitySnapshotInput {
     pub scope: DistributionFilter,
-    pub stat_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

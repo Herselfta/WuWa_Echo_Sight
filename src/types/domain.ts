@@ -72,18 +72,6 @@ export interface DistributionPayload {
   rows: DistributionRow[];
 }
 
-export interface EchoProbRow {
-  echoId: string;
-  nickname: string | null;
-  mainStatKey: string;
-  costClass: number;
-  status: EchoStatus;
-  openedSlotsCount: number;
-  expectationRankMin: number;
-  pNext: number;
-  pFinal: number;
-}
-
 export interface EventRow {
   eventId: string;
   echoId: string;

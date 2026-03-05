@@ -14,9 +14,7 @@ use commands::event::{
     append_ordered_event, delete_ordered_event, edit_ordered_event, get_event_history,
 };
 use commands::export::{export_csv, import_data};
-use commands::probability::{
-    create_probability_snapshot, get_echoes_for_stat, get_global_distribution,
-};
+use commands::probability::{create_probability_snapshot, get_global_distribution};
 use commands::verification::{
     get_category_streak_analysis, get_reversion_analysis, get_transition_matrix,
 };
@@ -58,7 +56,6 @@ pub fn run() {
             delete_ordered_event,
             get_event_history,
             get_global_distribution,
-            get_echoes_for_stat,
             create_probability_snapshot,
             export_csv,
             import_data,
