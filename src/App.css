@@ -222,6 +222,62 @@ button:hover {
   gap: 6px;
 }
 
+.analysis-edit-layout {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(150px, 180px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.analysis-transfer-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.analysis-transfer-card button {
+  width: 100%;
+  white-space: nowrap;
+}
+
+.analysis-edit-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+
+.analysis-edit-form > h3 {
+  margin: 0;
+  flex: 1 0 100%;
+}
+
+.analysis-edit-form label,
+.analysis-edit-form input,
+.analysis-edit-form select {
+  min-width: 0;
+}
+
+.analysis-edit-form input,
+.analysis-edit-form select {
+  width: 100%;
+}
+
+.analysis-field-wide {
+  flex: 1.6 1 190px;
+}
+
+.analysis-field-compact {
+  flex: 0.9 1 110px;
+  max-width: 170px;
+}
+
+.analysis-submit-btn {
+  flex: 0 0 auto;
+  align-self: end;
+  white-space: nowrap;
+}
+
 .manage-btn-active {
   background: var(--accent);
   color: #fff;
@@ -1214,6 +1270,22 @@ button:hover {
 @media (max-width: 1200px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .analysis-edit-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .analysis-field-compact {
+    flex: 1 1 140px;
+    max-width: none;
+  }
+
+  .analysis-submit-btn {
+    flex: 1 1 140px;
+    width: 100%;
   }
 }
 

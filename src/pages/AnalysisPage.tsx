@@ -124,59 +124,62 @@ export function AnalysisPage() {
 
   return (
     <section className="page">
-      <div className="card inline-row">
-        <button type="button" onClick={() => void doExport()} disabled={loading}>
-          导出 CSV(zip)
-        </button>
-        <button type="button" onClick={() => void pickAndImportZip()} disabled={loading}>
-          选择并导入 zip
-        </button>
-      </div>
+      <div className="analysis-edit-layout">
+        <div className="card analysis-transfer-card">
+          <button type="button" onClick={() => void doExport()} disabled={loading}>
+            导出数据为zip
+          </button>
+          <button type="button" onClick={() => void pickAndImportZip()} disabled={loading}>
+            选择并导入zip
+          </button>
+        </div>
 
-      <form className="card form-grid" onSubmit={submitEdit}>
-        <h3>事件修正</h3>
-        <label>
-          Event ID
-          <input value={eventId} onChange={(e) => setEventId(e.target.value)} placeholder="必填" />
-        </label>
-        <label>
-          槽位
-          <input value={slotNo} onChange={(e) => setSlotNo(e.target.value)} placeholder="可选" />
-        </label>
-        <label>
-          词条 key
-          <input value={statKey} onChange={(e) => setStatKey(e.target.value)} placeholder="可选" />
-        </label>
-        <label>
-          档位
-          <input value={tierIndex} onChange={(e) => setTierIndex(e.target.value)} placeholder="可选" />
-        </label>
-        <label>
-          时间
-          <input type="datetime-local" value={eventTime} onChange={(e) => setEventTime(e.target.value)} />
-        </label>
-        <label>
-          重排模式
-          <select
-            value={reorderMode}
-            onChange={(e) => setReorderMode(e.target.value as "none" | "time_assist")}
+        <form className="card form-grid analysis-edit-form" onSubmit={submitEdit}>
+          <h3>事件修正</h3>
+          <label className="analysis-field-wide">
+            Event ID
+            <input value={eventId} onChange={(e) => setEventId(e.target.value)} placeholder="必填" />
+          </label>
+          <label className="analysis-field-compact">
+            槽位
+            <input value={slotNo} onChange={(e) => setSlotNo(e.target.value)} placeholder="可选" />
+          </label>
+          <label className="analysis-field-wide">
+            词条 key
+            <input value={statKey} onChange={(e) => setStatKey(e.target.value)} placeholder="可选" />
+          </label>
+          <label className="analysis-field-compact">
+            档位
+            <input value={tierIndex} onChange={(e) => setTierIndex(e.target.value)} placeholder="可选" />
+          </label>
+          <label className="analysis-field-wide">
+            时间
+            <input type="datetime-local" value={eventTime} onChange={(e) => setEventTime(e.target.value)} />
+          </label>
+          <label className="analysis-field-compact">
+            重排模式
+            <select
+              value={reorderMode}
+              onChange={(e) => setReorderMode(e.target.value as "none" | "time_assist")}
+            >
+              <option value="none">none</option>
+              <option value="time_assist">time_assist</option>
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="analysis-submit-btn"
+            disabled={loading}
+            onClick={(e) => {
+              if (!window.confirm("确认修改事件？修改后将重算相关统计。")) {
+                e.preventDefault();
+              }
+            }}
           >
-            <option value="none">none</option>
-            <option value="time_assist">time_assist</option>
-          </select>
-        </label>
-        <button
-          type="submit"
-          disabled={loading}
-          onClick={(e) => {
-            if (!window.confirm("确认修改事件？修改后将重算相关统计。")) {
-              e.preventDefault();
-            }
-          }}
-        >
-          提交修正
-        </button>
-      </form>
+            提交修正
+          </button>
+        </form>
+      </div>
 
       {message ? <p className="message">{message}</p> : null}
 
