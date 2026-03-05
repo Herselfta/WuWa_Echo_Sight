@@ -504,55 +504,59 @@ function ReversionPanel({
             </tbody>
           </table>
         </div>
-      </div>
-
-      {/* Window conditional table */}
-      {selected.length > 0 && (
-        <div style={{ overflowX: "auto", marginTop: 14 }}>
+        {/* Window conditional table */}
+        <div className="reversion-half-panel reversion-window-panel">
           <strong style={{ fontSize: 13 }}>窗口条件频率（前 W 次出现次数 → 后 W 次出现率）</strong>
           <p style={{ fontSize: 11, color: "var(--ink-dim)", margin: "2px 0 6px" }}>
             若在前 W 事件中出现越多，后 W 出现率越低 → 均值回归；反之 → 聚集。
           </p>
-          {selected.map((s) => (
-            <div key={s.statKey} style={{ marginBottom: 10 }}>
-              <span style={{ fontSize: 12 }}>
-                <strong>{s.displayName}</strong>（基准 {(s.baseFreq * 100).toFixed(1)}%/事件）
-              </span>
-              <div className="inline-row" style={{ flexWrap: "wrap", marginTop: 4 }}>
-                {s.windowBuckets.map((b) => (
-                  <div
-                    key={b.prevWindowCount}
-                    style={{
-                      fontSize: 11,
-                      padding: "4px 10px",
-                      borderRadius: 4,
-                      border: "1px solid var(--line)",
-                      background: "var(--panel)",
-                      textAlign: "center",
-                    }}
-                  >
-                    <div style={{ fontWeight: 600 }}>前={b.prevWindowCount}{b.prevWindowCount >= 3 ? "+" : ""}</div>
-                    <div>n={b.sampleCount}</div>
+          {selected.length > 0 ? (
+            selected.map((s) => (
+              <div key={s.statKey} style={{ marginBottom: 10 }}>
+                <span style={{ fontSize: 12 }}>
+                  <strong>{s.displayName}</strong>（基准 {(s.baseFreq * 100).toFixed(1)}%/事件）
+                </span>
+                <div className="inline-row" style={{ flexWrap: "wrap", marginTop: 4 }}>
+                  {s.windowBuckets.map((b) => (
                     <div
+                      key={b.prevWindowCount}
                       style={{
-                        color:
-                          b.prevWindowCount >= 2 && b.meanNextFreq < s.baseFreq * 0.6
-                            ? "var(--ok, #27ae60)"
-                            : "inherit",
+                        fontSize: 11,
+                        padding: "4px 10px",
+                        borderRadius: 4,
+                        border: "1px solid var(--line)",
+                        background: "var(--panel)",
+                        textAlign: "center",
                       }}
                     >
-                      后={( b.meanNextFreq * 100).toFixed(1)}%
+                      <div style={{ fontWeight: 600 }}>
+                        前={b.prevWindowCount}
+                        {b.prevWindowCount >= 3 ? "+" : ""}
+                      </div>
+                      <div>n={b.sampleCount}</div>
+                      <div
+                        style={{
+                          color:
+                            b.prevWindowCount >= 2 && b.meanNextFreq < s.baseFreq * 0.6
+                              ? "var(--ok, #27ae60)"
+                              : "inherit",
+                        }}
+                      >
+                        后={(b.meanNextFreq * 100).toFixed(1)}%
+                      </div>
                     </div>
-                  </div>
-                ))}
-                {s.windowBuckets.length === 0 && (
-                  <span style={{ fontSize: 11, color: "var(--ink-dim)" }}>数据不足</span>
-                )}
+                  ))}
+                  {s.windowBuckets.length === 0 && (
+                    <span style={{ fontSize: 11, color: "var(--ink-dim)" }}>数据不足</span>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ))
+          ) : (
+            <p style={{ fontSize: 12, color: "var(--ink-dim)", margin: 0 }}>请先选择至少一个词条。</p>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
