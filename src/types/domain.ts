@@ -218,25 +218,6 @@ export interface TransitionMatrix {
   pValue: number;
 }
 
-export interface SlotStatCell {
-  slotNo: number;
-  statKey: string;
-  displayName: string;
-  category: string;
-  count: number;
-  probability: number;
-}
-
-export interface SlotStatDistribution {
-  statKeys: [string, string][];
-  cells: SlotStatCell[];
-  slotTotals: number[];
-  totalEvents: number;
-  chiSquared: number;
-  degreesOfFreedom: number;
-  pValue: number;
-}
-
 export interface CategoryStreakRow {
   echoId: string;
   category: string;

@@ -12,7 +12,6 @@ import type {
   ExpectationItem,
   HypothesisFilter,
   ReversionReport,
-  SlotStatDistribution,
   StatDef,
   TransitionMatrix,
 } from "../types/domain";
@@ -161,12 +160,6 @@ export async function getTransitionMatrix(
   filter?: HypothesisFilter,
 ): Promise<TransitionMatrix> {
   return invoke("get_transition_matrix", { filter });
-}
-
-export async function getSlotStatDistribution(
-  filter?: HypothesisFilter,
-): Promise<SlotStatDistribution> {
-  return invoke("get_slot_stat_distribution", { filter });
 }
 
 export async function getCategoryStreakAnalysis(

@@ -17,8 +17,7 @@ use commands::event::{
 };
 use commands::export::{export_csv, import_data};
 use commands::hypothesis::{
-    get_category_streak_analysis, get_reversion_analysis, get_slot_stat_distribution,
-    get_transition_matrix,
+    get_category_streak_analysis, get_reversion_analysis, get_transition_matrix,
 };
 use commands::pattern::get_daily_pattern_decision;
 use db::{init_database, AppState};
@@ -64,7 +63,6 @@ pub fn run() {
             export_csv,
             import_data,
             get_transition_matrix,
-            get_slot_stat_distribution,
             get_category_streak_analysis,
             get_reversion_analysis,
             get_daily_pattern_decision,

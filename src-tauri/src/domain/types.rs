@@ -460,31 +460,6 @@ pub struct TransitionMatrix {
     pub p_value: f64,
 }
 
-/// Cell in the slotNo × stat distribution table
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SlotStatCell {
-    pub slot_no: i64,
-    pub stat_key: String,
-    pub display_name: String,
-    pub category: String,
-    pub count: i64,
-    pub probability: f64,
-}
-
-/// Slot-stat independence test
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SlotStatDistribution {
-    pub stat_keys: Vec<(String, String)>,
-    pub cells: Vec<SlotStatCell>,
-    pub slot_totals: Vec<i64>,
-    pub total_events: i64,
-    pub chi_squared: f64,
-    pub degrees_of_freedom: i64,
-    pub p_value: f64,
-}
-
 /// A detected streak of same-category stats
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

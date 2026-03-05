@@ -6,7 +6,7 @@ use tauri::State;
 use crate::db::{open_connection, AppState};
 use crate::domain::types::{
     CategoryStreakReport, CategoryStreakRow, HypothesisFilter, ReversionBucket, ReversionReport,
-    SlotStatCell, SlotStatDistribution, StatReversionSeries, TransitionCell, TransitionMatrix,
+    StatReversionSeries, TransitionCell, TransitionMatrix,
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -287,111 +287,7 @@ pub fn get_transition_matrix(
 }
 
 /* ═══════════════════════════════════════════════════════
-2. Per-slot stat distribution — P(stat | slotNo)
-═══════════════════════════════════════════════════════ */
-
-#[tauri::command]
-pub fn get_slot_stat_distribution(
-    state: State<'_, AppState>,
-    filter: Option<HypothesisFilter>,
-) -> Result<SlotStatDistribution, String> {
-    let conn = open_connection(&state)?;
-    let filter = filter.unwrap_or_default();
-    let stat_keys = list_stat_keys(&conn)?;
-    let key_list: Vec<String> = stat_keys.iter().map(|(k, _)| k.clone()).collect();
-    let display_map: HashMap<String, String> = stat_keys.into_iter().collect();
-    let key_idx: HashMap<&str, usize> = key_list
-        .iter()
-        .enumerate()
-        .map(|(i, k)| (k.as_str(), i))
-        .collect();
-
-    let sequences = load_echo_sequences(&conn, &filter)?;
-
-    let n = key_list.len();
-    // slots 1..5
-    let mut grid = vec![vec![0i64; n]; 5];
-    let mut slot_totals = vec![0i64; 5];
-
-    for (_echo_id, events) in &sequences {
-        for ev in events {
-            let si = (ev.slot_no - 1).clamp(0, 4) as usize;
-            if let Some(&ki) = key_idx.get(ev.stat_key.as_str()) {
-                grid[si][ki] += 1;
-                slot_totals[si] += 1;
-            }
-        }
-    }
-
-    let mut cells = Vec::new();
-    for slot in 0..5usize {
-        for (ki, key) in key_list.iter().enumerate() {
-            let count = grid[slot][ki];
-            let probability = if slot_totals[slot] > 0 {
-                count as f64 / slot_totals[slot] as f64
-            } else {
-                0.0
-            };
-            let category = stat_category(key).to_string();
-            cells.push(SlotStatCell {
-                slot_no: (slot + 1) as i64,
-                stat_key: key.clone(),
-                display_name: display_map.get(key).cloned().unwrap_or_else(|| key.clone()),
-                category,
-                count,
-                probability,
-            });
-        }
-    }
-
-    // Chi-squared test: is slot_no independent of stat_key?
-    let grand_total: i64 = slot_totals.iter().sum();
-    let stat_totals: Vec<i64> = (0..n)
-        .map(|ki| (0..5).map(|si| grid[si][ki]).sum::<i64>())
-        .collect();
-
-    let mut chi_squared = 0.0f64;
-    if grand_total > 0 {
-        for slot in 0..5 {
-            for ki in 0..n {
-                let expected =
-                    (slot_totals[slot] as f64) * (stat_totals[ki] as f64) / (grand_total as f64);
-                if expected > 0.0 {
-                    let observed = grid[slot][ki] as f64;
-                    chi_squared += (observed - expected).powi(2) / expected;
-                }
-            }
-        }
-    }
-
-    let active_slots = slot_totals.iter().filter(|&&t| t > 0).count() as i64;
-    let active_stats = stat_totals.iter().filter(|&&t| t > 0).count() as i64;
-    let df = (active_slots.max(1) - 1) * (active_stats.max(1) - 1);
-    let p_value = if df > 0 {
-        chi_sq_p_value(chi_squared, df)
-    } else {
-        1.0
-    };
-
-    Ok(SlotStatDistribution {
-        stat_keys: key_list
-            .iter()
-            .map(|k| {
-                let dn = display_map.get(k).cloned().unwrap_or_else(|| k.clone());
-                (k.clone(), dn)
-            })
-            .collect(),
-        cells,
-        slot_totals,
-        total_events: grand_total,
-        chi_squared,
-        degrees_of_freedom: df,
-        p_value,
-    })
-}
-
-/* ═══════════════════════════════════════════════════════
-3. Category streak / zone analysis
+2. Category streak / zone analysis
 ═══════════════════════════════════════════════════════ */
 
 #[tauri::command]
@@ -606,7 +502,7 @@ fn erfc_approx(x: f64) -> f64 {
 }
 
 /* ═══════════════════════════════════════════════════════
-4. Mean-reversion analysis
+3. Mean-reversion analysis
    ─ Flatten all events into global analysis_seq order
    ─ Per stat: running cumulative frequency deviation,
      inter-arrival gap statistics, autocorrelation,

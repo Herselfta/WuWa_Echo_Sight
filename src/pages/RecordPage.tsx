@@ -11,7 +11,7 @@ import {
   upsertBackfillState,
 } from "../api/tauri";
 import { BarChart } from "../components/BarChart";
-import { HypothesisVerification } from "../components/HypothesisVerification";
+import { HypothesisVerification, type HypothesisTabKey } from "../components/HypothesisVerification";
 import {
   beginLongPressDrag,
   cancelLongPressDragCandidate,
@@ -266,7 +266,8 @@ export function RecordPage() {
   const [loadingDist, setLoadingDist] = useState(false);
   const [loadingPatternDecision, setLoadingPatternDecision] = useState(false);
   const [boardSurfaceTab, setBoardSurfaceTab] = useState<"analysis" | "decision">("analysis");
-  const [analysisViewTab, setAnalysisViewTab] = useState<"probability" | "hypothesis">("probability");
+  const [analysisViewTab, setAnalysisViewTab] = useState<"probability" | HypothesisTabKey>("probability");
+  const [analysisRefreshToken, setAnalysisRefreshToken] = useState(0);
   const [message, setMessage] = useState("");
   const [msgKind, setMsgKind] = useState<"info" | "success" | "error">("info");
   const [messageId, setMessageId] = useState(0);
@@ -324,6 +325,8 @@ export function RecordPage() {
     const rows = distribution?.rows ?? [];
     return { labels: rows.map((r) => r.displayName), values: rows.map((r) => r.pGlobal) };
   }, [distribution]);
+  const activeHypothesisTab: HypothesisTabKey | null =
+    analysisViewTab === "probability" ? null : analysisViewTab;
 
   const createPresetName = useMemo(
     () => expectationPresets.find((p) => p.presetId === createPresetId)?.name ?? null,
@@ -489,6 +492,7 @@ export function RecordPage() {
     try {
       const result = await getGlobalDistribution(distributionFilter);
       setDistribution(result);
+      setAnalysisRefreshToken((x) => x + 1);
     } finally { setLoadingDist(false); }
   };
 
@@ -1732,10 +1736,24 @@ export function RecordPage() {
               </button>
               <button
                 type="button"
-                className={`tab-btn${analysisViewTab === "hypothesis" ? " active" : ""}`}
-                onClick={() => setAnalysisViewTab("hypothesis")}
+                className={`tab-btn${analysisViewTab === "transition" ? " active" : ""}`}
+                onClick={() => setAnalysisViewTab("transition")}
               >
-                统计验证视图
+                转移矩阵
+              </button>
+              <button
+                type="button"
+                className={`tab-btn${analysisViewTab === "streak" ? " active" : ""}`}
+                onClick={() => setAnalysisViewTab("streak")}
+              >
+                区间/连档
+              </button>
+              <button
+                type="button"
+                className={`tab-btn${analysisViewTab === "reversion" ? " active" : ""}`}
+                onClick={() => setAnalysisViewTab("reversion")}
+              >
+                均值回归
               </button>
             </nav>
           ) : null}
@@ -2098,9 +2116,14 @@ export function RecordPage() {
         </div>
         ) : null}
 
-        {boardSurfaceTab === "analysis" && analysisViewTab === "hypothesis" ? (
+        {boardSurfaceTab === "analysis" && activeHypothesisTab ? (
           <div className="record-board-subsection">
-            <HypothesisVerification embedded />
+            <HypothesisVerification
+              embedded
+              forcedTab={activeHypothesisTab}
+              hideTabNav
+              refreshToken={analysisRefreshToken}
+            />
           </div>
         ) : null}
           </div>

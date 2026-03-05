@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import {
   getCategoryStreakAnalysis,
   getReversionAnalysis,
-  getSlotStatDistribution,
   getTransitionMatrix,
 } from "../api/tauri";
 import { useAppStore } from "../store/useAppStore";
@@ -11,60 +10,89 @@ import type {
   CategoryStreakReport,
   HypothesisFilter,
   ReversionReport,
-  SlotStatCell,
-  SlotStatDistribution,
   StatReversionSeries,
   TransitionCell,
   TransitionMatrix,
 } from "../types/domain";
 
-export function HypothesisVerification({ embedded = false }: { embedded?: boolean }) {
+export type HypothesisTabKey = "transition" | "streak" | "reversion";
+
+interface HypothesisVerificationProps {
+  embedded?: boolean;
+  forcedTab?: HypothesisTabKey;
+  hideTabNav?: boolean;
+  refreshToken?: number;
+}
+
+export function HypothesisVerification({
+  embedded = false,
+  forcedTab,
+  hideTabNav = false,
+  refreshToken = 0,
+}: HypothesisVerificationProps) {
   const { statDefs } = useAppStore();
   const [message, setMessage] = useState("");
   
   /* ── Hypothesis verification state ── */
-  const [hypoTab, setHypoTab] = useState<"transition" | "slotstat" | "streak" | "reversion">("transition");
+  const [hypoTab, setHypoTab] = useState<HypothesisTabKey>("transition");
   const [hypoFilter, setHypoFilter] = useState<HypothesisFilter>({});
   const [hypoLoading, setHypoLoading] = useState(false);
   const [transitionData, setTransitionData] = useState<TransitionMatrix | null>(null);
-  const [slotStatData, setSlotStatData] = useState<SlotStatDistribution | null>(null);
   const [streakData, setStreakData] = useState<CategoryStreakReport | null>(null);
   const [reversionData, setReversionData] = useState<ReversionReport | null>(null);
   const [revWindowSize, setRevWindowSize] = useState("10");
   const [revSelectedStats, setRevSelectedStats] = useState<string[]>([]);
+  const requestIdRef = useRef(0);
 
   const statNameMap = useMemo(() => {
     const m: Record<string, string> = {};
     for (const sd of statDefs) m[sd.statKey] = sd.displayName;
     return m;
   }, [statDefs]);
+  const activeTab = forcedTab ?? hypoTab;
+  const showTabNav = !hideTabNav && !forcedTab;
 
-  const runHypothesisVerification = async () => {
+  const loadHypothesisData = useCallback(async () => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setHypoLoading(true);
     setMessage("");
     try {
-      const [tm, ss, sa, rv] = await Promise.all([
+      const [tm, sa, rv] = await Promise.all([
         getTransitionMatrix(hypoFilter),
-        getSlotStatDistribution(hypoFilter),
         getCategoryStreakAnalysis(hypoFilter),
         getReversionAnalysis(hypoFilter, Number(revWindowSize) || 10),
       ]);
+      if (requestId !== requestIdRef.current) return;
       setTransitionData(tm);
-      setSlotStatData(ss);
       setStreakData(sa);
       setReversionData(rv);
       // Auto-select up to 5 most frequent stats
       setRevSelectedStats(rv.statSeries.slice(0, 5).map((s) => s.statKey));
     } catch (error) {
+      if (requestId !== requestIdRef.current) return;
       setMessage(`假设验证失败: ${String(error)}`);
     } finally {
-      setHypoLoading(false);
+      if (requestId === requestIdRef.current) {
+        setHypoLoading(false);
+      }
     }
-  };
+  }, [hypoFilter, revWindowSize]);
+
+  useEffect(() => {
+    void loadHypothesisData();
+  }, [
+    loadHypothesisData,
+    hypoFilter.costClass,
+    hypoFilter.mainStatKey,
+    hypoFilter.status,
+    revWindowSize,
+    refreshToken,
+  ]);
 
   return (
     <div className={embedded ? "hypothesis-shell" : "card"}>
-        <h3>假设验证</h3>
+        <h3>统计验证</h3>
         <div className="inline-row" style={{ flexWrap: "wrap" }}>
           {message ? <span className="message">{message}</span> : null}
           <label style={{ fontSize: 13 }}>
@@ -118,56 +146,50 @@ export function HypothesisVerification({ embedded = false }: { embedded?: boolea
               <option value="abandoned">abandoned</option>
             </select>
           </label>
-          <button type="button" onClick={() => void runHypothesisVerification()} disabled={hypoLoading}>
-            {hypoLoading ? "分析中…" : "运行验证"}
-          </button>
+          {activeTab === "reversion" ? (
+            <label style={{ fontSize: 12, marginLeft: 8 }}>
+              窗口
+              <input
+                type="number"
+                min={5}
+                max={30}
+                value={revWindowSize}
+                onChange={(e) => setRevWindowSize(e.target.value)}
+                style={{ width: 48, marginLeft: 4 }}
+              />
+            </label>
+          ) : null}
         </div>
 
         {/* Tab navigation */}
+        {showTabNav ? (
         <nav className="tab-nav" style={{ marginTop: 12 }}>
           <button
             type="button"
-            className={`tab-btn${hypoTab === "transition" ? " active" : ""}`}
+            className={`tab-btn${activeTab === "transition" ? " active" : ""}`}
             onClick={() => setHypoTab("transition")}
           >
             转移矩阵
           </button>
           <button
             type="button"
-            className={`tab-btn${hypoTab === "slotstat" ? " active" : ""}`}
-            onClick={() => setHypoTab("slotstat")}
-          >
-            槽位分布
-          </button>
-          <button
-            type="button"
-            className={`tab-btn${hypoTab === "streak" ? " active" : ""}`}
+            className={`tab-btn${activeTab === "streak" ? " active" : ""}`}
             onClick={() => setHypoTab("streak")}
           >
             区间/连档
           </button>
           <button
             type="button"
-            className={`tab-btn${hypoTab === "reversion" ? " active" : ""}`}
+            className={`tab-btn${activeTab === "reversion" ? " active" : ""}`}
             onClick={() => setHypoTab("reversion")}
           >
             均值回归
           </button>
-          <label style={{ fontSize: 12, marginLeft: 8 }}>
-            窗口
-            <input
-              type="number"
-              min={5}
-              max={30}
-              value={revWindowSize}
-              onChange={(e) => setRevWindowSize(e.target.value)}
-              style={{ width: 48, marginLeft: 4 }}
-            />
-          </label>
         </nav>
+        ) : null}
 
         {/* ── Tab: Transition Matrix ── */}
-        {hypoTab === "transition" && (
+        {activeTab === "transition" && (
           <div style={{ marginTop: 12 }}>
             {transitionData ? (
               <>
@@ -201,50 +223,15 @@ export function HypothesisVerification({ embedded = false }: { embedded?: boolea
                 />
               </>
             ) : (
-              <p style={{ fontSize: 13, color: "var(--ink-dim)" }}>点击「运行验证」获取数据</p>
-            )}
-          </div>
-        )}
-
-        {/* ── Tab: Slot-Stat Distribution ── */}
-        {hypoTab === "slotstat" && (
-          <div style={{ marginTop: 12 }}>
-            {slotStatData ? (
-              <>
-                <p style={{ fontSize: 13, marginBottom: 8 }}>
-                  总事件数: <strong>{slotStatData.totalEvents}</strong> &nbsp;|&nbsp; χ²={" "}
-                  <strong>{slotStatData.chiSquared.toFixed(2)}</strong> &nbsp;|&nbsp; df={" "}
-                  {slotStatData.degreesOfFreedom} &nbsp;|&nbsp; p={" "}
-                  <strong
-                    style={{
-                      color: slotStatData.pValue < 0.05 ? "var(--danger, #e74c3c)" : "inherit",
-                    }}
-                  >
-                    {slotStatData.pValue < 0.001
-                      ? slotStatData.pValue.toExponential(2)
-                      : slotStatData.pValue.toFixed(4)}
-                  </strong>
-                  {slotStatData.pValue < 0.01 && (
-                    <span style={{ color: "var(--danger, #e74c3c)", marginLeft: 8 }}>
-                      ⚠ 槽位-词条非独立
-                    </span>
-                  )}
-                  {slotStatData.pValue >= 0.05 && (
-                    <span style={{ color: "var(--ok, #27ae60)", marginLeft: 8 }}>
-                      ✓ 各槽位分布一致
-                    </span>
-                  )}
-                </p>
-                <SlotStatTable data={slotStatData} nameMap={statNameMap} />
-              </>
-            ) : (
-              <p style={{ fontSize: 13, color: "var(--ink-dim)" }}>点击「运行验证」获取数据</p>
+              <p style={{ fontSize: 13, color: "var(--ink-dim)" }}>
+                {hypoLoading ? "数据加载中…" : "暂无数据"}
+              </p>
             )}
           </div>
         )}
 
         {/* ── Tab: Category Streak / Zone ── */}
-        {hypoTab === "streak" && (
+        {activeTab === "streak" && (
           <div style={{ marginTop: 12 }}>
             {streakData ? (
               <>
@@ -346,12 +333,14 @@ export function HypothesisVerification({ embedded = false }: { embedded?: boolea
                 )}
               </>
             ) : (
-              <p style={{ fontSize: 13, color: "var(--ink-dim)" }}>点击「运行验证」获取数据</p>
+              <p style={{ fontSize: 13, color: "var(--ink-dim)" }}>
+                {hypoLoading ? "数据加载中…" : "暂无数据"}
+              </p>
             )}
           </div>
         )}
         {/* ── Tab: Mean Reversion ── */}
-        {hypoTab === "reversion" && (
+        {activeTab === "reversion" && (
           <div style={{ marginTop: 12 }}>
             {reversionData ? (
               <ReversionPanel
@@ -364,7 +353,9 @@ export function HypothesisVerification({ embedded = false }: { embedded?: boolea
                 }
               />
             ) : (
-              <p style={{ fontSize: 13, color: "var(--ink-dim)" }}>点击「运行验证」获取数据</p>
+              <p style={{ fontSize: 13, color: "var(--ink-dim)" }}>
+                {hypoLoading ? "数据加载中…" : "暂无数据"}
+              </p>
             )}
           </div>
         )}
@@ -650,6 +641,11 @@ function TransitionHeatmap({
   data: TransitionMatrix;
   nameMap: Record<string, string>;
 }) {
+  const [hoverTip, setHoverTip] = useState<{
+    x: number;
+    y: number;
+    text: string;
+  } | null>(null);
   const keys = data.statKeys.map(([k]) => k);
   const cellMap = useMemo(() => {
     const m = new Map<string, TransitionCell>();
@@ -671,6 +667,16 @@ function TransitionHeatmap({
     if (residual > 0) return `rgba(231, 76, 60, ${norm * 0.6})`;
     if (residual < 0) return `rgba(52, 152, 219, ${norm * 0.6})`;
     return "transparent";
+  };
+  const updateTipPosition = (x: number, y: number) => {
+    const maxWidth = 260;
+    const pad = 14;
+    const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+    const vh = typeof window !== "undefined" ? window.innerHeight : 720;
+    return {
+      x: Math.min(x + pad, vw - maxWidth),
+      y: Math.min(y + pad, vh - 100),
+    };
   };
 
   return (
@@ -694,6 +700,10 @@ function TransitionHeatmap({
               </td>
               {keys.map((toK) => {
                 const cell = cellMap.get(`${fromK}|${toK}`);
+                const cellTip =
+                  cell
+                    ? `${nameMap[fromK] ?? fromK}→${nameMap[toK] ?? toK}\n观测: ${cell.count}\n期望: ${cell.expected.toFixed(1)}\n残差: ${cell.residual.toFixed(2)}`
+                    : "";
                 return (
                   <td
                     key={toK}
@@ -701,11 +711,15 @@ function TransitionHeatmap({
                       background: cell ? cellColor(cell.residual) : "transparent",
                       cursor: "default",
                     }}
-                    title={
-                      cell
-                        ? `${nameMap[fromK] ?? fromK}→${nameMap[toK] ?? toK}\n观测: ${cell.count}\n期望: ${cell.expected.toFixed(1)}\n残差: ${cell.residual.toFixed(2)}`
-                        : ""
-                    }
+                    onMouseMove={(e) => {
+                      if (!cellTip) {
+                        setHoverTip(null);
+                        return;
+                      }
+                      const pos = updateTipPosition(e.clientX, e.clientY);
+                      setHoverTip({ x: pos.x, y: pos.y, text: cellTip });
+                    }}
+                    onMouseLeave={() => setHoverTip(null)}
                   >
                     {cell?.count ?? 0}
                   </td>
@@ -718,66 +732,29 @@ function TransitionHeatmap({
       <p style={{ fontSize: 11, color: "var(--ink-dim)", marginTop: 4 }}>
         🔴 观测 &gt; 期望 &nbsp; 🔵 观测 &lt; 期望 &nbsp; 悬停查看详情
       </p>
-    </div>
-  );
-}
-
-/** Slot-Stat distribution table: rows = stats, columns = slot 1-5 */
-function SlotStatTable({
-  data,
-  nameMap,
-}: {
-  data: SlotStatDistribution;
-  nameMap: Record<string, string>;
-}) {
-  const keys = data.statKeys.map(([k]) => k);
-  const cellMap = useMemo(() => {
-    const m = new Map<string, SlotStatCell>();
-    for (const c of data.cells) m.set(`${c.slotNo}|${c.statKey}`, c);
-    return m;
-  }, [data.cells]);
-
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table className="compact-table table" style={{ fontSize: 12 }}>
-        <thead>
-          <tr>
-            <th>词条</th>
-            <th>类别</th>
-            {[1, 2, 3, 4, 5].map((s) => (
-              <th key={s}>
-                Slot {s}
-                {data.slotTotals[s - 1] != null && (
-                  <div style={{ fontWeight: 400, fontSize: 10 }}>n={data.slotTotals[s - 1]}</div>
-                )}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {keys.map((sk) => {
-            const firstCell = data.cells.find((c) => c.statKey === sk);
-            return (
-              <tr key={sk}>
-                <td>{nameMap[sk] ?? sk}</td>
-                <td style={{ fontSize: 11 }}>{firstCell?.category ?? "—"}</td>
-                {[1, 2, 3, 4, 5].map((s) => {
-                  const cell = cellMap.get(`${s}|${sk}`);
-                  const pct = cell ? (cell.probability * 100).toFixed(1) : "—";
-                  return (
-                    <td
-                      key={s}
-                      title={cell ? `计数: ${cell.count} / ${data.slotTotals[s - 1]}` : ""}
-                    >
-                      {pct}%
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      {hoverTip ? (
+        <div
+          style={{
+            position: "fixed",
+            left: hoverTip.x,
+            top: hoverTip.y,
+            zIndex: 4000,
+            maxWidth: 260,
+            padding: "6px 8px",
+            borderRadius: 6,
+            border: "1px solid rgba(148, 163, 184, 0.35)",
+            background: "rgba(15, 23, 42, 0.95)",
+            color: "#fff",
+            fontSize: 11,
+            lineHeight: 1.35,
+            whiteSpace: "pre-line",
+            pointerEvents: "none",
+            boxShadow: "0 8px 20px rgba(15, 23, 42, 0.22)",
+          }}
+        >
+          {hoverTip.text}
+        </div>
+      ) : null}
     </div>
   );
 }
