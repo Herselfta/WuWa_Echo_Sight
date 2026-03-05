@@ -125,7 +125,7 @@ export function DistributionPage() {
 
       <div className="card">
         <h3>全局概率图（总事件 {distribution?.totalEvents ?? 0}）</h3>
-        <BarChart labels={chartData.labels} values={chartData.values} />
+        <BarChart labels={chartData.labels} values={chartData.values} tooltipRows={distribution?.rows ?? []} />
       </div>
 
       <div className="card">

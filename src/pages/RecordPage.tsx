@@ -4,7 +4,6 @@ import {
   createEcho,
   deleteOrderedEvent,
   getDailyPatternDecision,
-  getEchoesForStat,
   getEventHistory,
   getGlobalDistribution,
   saveExpectationPreset,
@@ -31,7 +30,6 @@ import type {
   DailyPatternDecisionReport,
   DistributionFilter,
   DistributionPayload,
-  EchoProbRow,
   EchoStatus,
   EventRow,
   ExpectationItem,
@@ -255,22 +253,20 @@ export function RecordPage() {
   /* === distribution / analysis === */
   const [distributionFilter, setDistributionFilter] = useState<DistributionFilter>({});
   const [distribution, setDistribution] = useState<DistributionPayload | null>(null);
-  const [selectedDistStatKey, setSelectedDistStatKey] = useState<string | null>(null);
-  const [echoProbRows, setEchoProbRows] = useState<EchoProbRow[]>([]);
   const [patternDecision, setPatternDecision] = useState<DailyPatternDecisionReport | null>(null);
   const [patternManualStartStr, setPatternManualStartStr] = useState("0");
   const [patternManualCycleStr, setPatternManualCycleStr] = useState("5");
   const [patternManualGuessStr, setPatternManualGuessStr] = useState("AABCB, ABA");
   const [patternAutoMinLenStr, setPatternAutoMinLenStr] = useState("3");
   const [patternConfigVersion, setPatternConfigVersion] = useState(0);
-  const [sortBy, setSortBy] = useState("pFinal");
 
   /* === misc === */
   const [saving, setSaving] = useState(false);
   const [undoConfirmId, setUndoConfirmId] = useState<string | null>(null);
   const [loadingDist, setLoadingDist] = useState(false);
-  const [loadingProb, setLoadingProb] = useState(false);
   const [loadingPatternDecision, setLoadingPatternDecision] = useState(false);
+  const [boardSurfaceTab, setBoardSurfaceTab] = useState<"analysis" | "decision">("analysis");
+  const [analysisViewTab, setAnalysisViewTab] = useState<"probability" | "hypothesis">("probability");
   const [message, setMessage] = useState("");
   const [msgKind, setMsgKind] = useState<"info" | "success" | "error">("info");
   const [messageId, setMessageId] = useState(0);
@@ -493,18 +489,7 @@ export function RecordPage() {
     try {
       const result = await getGlobalDistribution(distributionFilter);
       setDistribution(result);
-      if (!selectedDistStatKey && result.rows.length > 0) setSelectedDistStatKey(result.rows[0].statKey);
     } finally { setLoadingDist(false); }
-  };
-
-  const loadEchoProbRows = async (statKey?: string) => {
-    const key = statKey ?? selectedDistStatKey;
-    if (!key) { setEchoProbRows([]); return; }
-    setLoadingProb(true);
-    try {
-      const rows = await getEchoesForStat({ statKey: key, sortBy, ...distributionFilter });
-      setEchoProbRows(rows);
-    } finally { setLoadingProb(false); }
   };
 
   const loadPatternDecision = async () => {
@@ -536,29 +521,10 @@ export function RecordPage() {
   // history fetching
   useEffect(() => { void loadHistory(); }, []);
 
-  useEffect(() => { void loadDistribution(); setSelectedDistStatKey(null); setEchoProbRows([]); }, [
+  useEffect(() => { void loadDistribution(); }, [
     distributionFilter.startTime, distributionFilter.endTime,
     distributionFilter.mainStatKey, distributionFilter.costClass, distributionFilter.status,
   ]);
-
-  // hit list is loaded manually on click, not automatically
-  const handleDistRowClick = (statKey: string) => {
-    setSelectedDistStatKey(statKey);
-    void loadEchoProbRows(statKey);
-  };
-
-  const handleSortByChange = (newSortBy: string) => {
-    setSortBy(newSortBy);
-    if (selectedDistStatKey) {
-      void (async () => {
-        setLoadingProb(true);
-        try {
-          const rows = await getEchoesForStat({ statKey: selectedDistStatKey, sortBy: newSortBy, ...distributionFilter });
-          setEchoProbRows(rows);
-        } finally { setLoadingProb(false); }
-      })();
-    }
-  };
 
   /* ── chain helpers for create form ─── */
 
@@ -756,7 +722,6 @@ export function RecordPage() {
         eventTime: normalizeLocalTime(eventTimeLocal),
       });
       await Promise.all([refreshEchoes(), loadHistory(), loadDistribution(), loadPatternDecision()]);
-      await loadEchoProbRows();
       showMsg(`录入成功  ·  eventId: ${result.eventId.slice(0, 8)}`, "success");
     } catch (error) {
       showMsg(String(error), "error");
@@ -776,7 +741,6 @@ export function RecordPage() {
     try {
       await deleteOrderedEvent({ eventId });
       await Promise.all([refreshEchoes(), loadHistory(), loadDistribution(), loadPatternDecision()]);
-      await loadEchoProbRows();
       showMsg("已撤销最近一次录入。", "success");
     } catch (error) {
       showMsg(String(error), "error");
@@ -1734,8 +1698,53 @@ export function RecordPage() {
 
       {/* ═══ 实时分析区 ═══ */}
       <div className="record-analysis">
+        <div className="card record-card record-board-shell">
+          <div className="record-card-header">
+            <span className="record-section-title">智能看板</span>
+            <span className="record-card-meta">
+              {boardSurfaceTab === "analysis" ? "统计分析视图" : "模式决策视图"}
+            </span>
+          </div>
+          <nav className="tab-nav">
+            <button
+              type="button"
+              className={`tab-btn${boardSurfaceTab === "analysis" ? " active" : ""}`}
+              onClick={() => setBoardSurfaceTab("analysis")}
+            >
+              分析页面
+            </button>
+            <button
+              type="button"
+              className={`tab-btn${boardSurfaceTab === "decision" ? " active" : ""}`}
+              onClick={() => setBoardSurfaceTab("decision")}
+            >
+              决策页面
+            </button>
+          </nav>
+          {boardSurfaceTab === "analysis" ? (
+            <nav className="tab-nav" style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                className={`tab-btn${analysisViewTab === "probability" ? " active" : ""}`}
+                onClick={() => setAnalysisViewTab("probability")}
+              >
+                概率总览
+              </button>
+              <button
+                type="button"
+                className={`tab-btn${analysisViewTab === "hypothesis" ? " active" : ""}`}
+                onClick={() => setAnalysisViewTab("hypothesis")}
+              >
+                统计验证视图
+              </button>
+            </nav>
+          ) : null}
+          <div className="record-board-content">
+
+        {boardSurfaceTab === "analysis" && analysisViewTab === "probability" ? (
+          <>
         {/* 筛选条件 - 紧凑行 */}
-        <div className="card record-card record-filter-bar">
+        <div className="record-board-subsection record-filter-bar">
           <span className="record-section-title">实时分析</span>
           <div className="record-filter-fields">
             <label className="record-filter-field">
@@ -1807,10 +1816,10 @@ export function RecordPage() {
           </div>
         </div>
 
-        {/* 图表 + 分布表 + 命中列表 */}
-        <div className="record-analysis-grid">
+        {/* 图表 + 分布表 */}
+        <div className="record-analysis-grid record-analysis-grid-optimized">
           {/* 概率图 */}
-          <div className="card record-card">
+          <div className="record-board-subsection">
             <div className="record-card-header">
               <span className="record-section-title">全局概率图</span>
               <span className="record-card-meta">
@@ -1818,12 +1827,16 @@ export function RecordPage() {
                 {loadingDist ? " · 更新中..." : ""}
               </span>
             </div>
-            <BarChart labels={distributionChartData.labels} values={distributionChartData.values} />
+            <BarChart
+              labels={distributionChartData.labels}
+              values={distributionChartData.values}
+              tooltipRows={distribution?.rows ?? []}
+            />
           </div>
 
           {/* 分布详情 */}
-          <div className="card record-card">
-            <span className="record-section-title">词条分布（点击联动）</span>
+          <div className="record-board-subsection">
+            <span className="record-section-title">词条分布</span>
             <div className="record-dist-table-wrap">
               <table className="table compact-table">
                 <thead>
@@ -1837,12 +1850,7 @@ export function RecordPage() {
                 </thead>
                 <tbody>
                   {(distribution?.rows ?? []).map((row) => (
-                    <tr
-                      key={row.statKey}
-                      className={row.statKey === selectedDistStatKey ? "active-row" : ""}
-                      onClick={() => handleDistRowClick(row.statKey)}
-                      style={{ cursor: "pointer" }}
-                    >
+                    <tr key={row.statKey}>
                       <td>{row.displayName}</td>
                       <td>{row.count}</td>
                       <td>{toPercent(row.pGlobal)}</td>
@@ -1858,57 +1866,12 @@ export function RecordPage() {
               </table>
             </div>
           </div>
-
-          {/* 命中声骸 */}
-          <div className="card record-card">
-            <div className="record-card-header">
-              <span className="record-section-title">
-                命中列表 {selectedDistStatKey ? `· ${statMap.get(selectedDistStatKey)?.displayName ?? selectedDistStatKey}` : ""}
-              </span>
-              <label className="record-sort-label">
-                排序
-                <select value={sortBy} onChange={(e) => handleSortByChange(e.target.value)}>
-                  <option value="pFinal">P(final)</option>
-                  <option value="pNext">P(next)</option>
-                  <option value="rank">期望权重</option>
-                  <option value="slots">槽位</option>
-                </select>
-              </label>
-            </div>
-            <div className="record-dist-table-wrap">
-              <table className="table compact-table">
-                <thead>
-                  <tr>
-                    <th>声骸</th>
-                    <th>槽位</th>
-                    <th>权重</th>
-                    <th>P(next)</th>
-                    <th>P(final)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {echoProbRows.map((row) => (
-                    <tr key={row.echoId} style={{ cursor: "pointer" }} onClick={() => setSelectedEchoId(row.echoId)}>
-                      <td>{row.nickname ?? row.echoId.slice(0, 8)}</td>
-                      <td>{row.openedSlotsCount}/5</td>
-                      <td>{row.expectationRankMin}</td>
-                      <td>{toPercent(row.pNext)}</td>
-                      <td>{toPercent(row.pFinal)}</td>
-                    </tr>
-                  ))}
-                  {echoProbRows.length === 0 && !loadingProb ? (
-                    <tr><td colSpan={5} className="chain-empty">
-                      {selectedDistStatKey ? "无匹配声骸" : "请点击左侧词条行"}
-                    </td></tr>
-                  ) : null}
-                </tbody>
-              </table>
-              {loadingProb ? <p className="hint" style={{ textAlign: "center", padding: "8px" }}>加载中...</p> : null}
-            </div>
-          </div>
         </div>
+          </>
+        ) : null}
 
-        <div className="card record-card" style={{ marginTop: 12 }}>
+        {boardSurfaceTab === "decision" ? (
+        <div className="record-board-subsection">
           <div className="record-card-header">
             <span className="record-section-title">今日模式决策 (MVP)</span>
             <span className="record-card-meta">
@@ -2133,7 +2096,15 @@ export function RecordPage() {
             <p className="hint">暂无数据</p>
           )}
         </div>
-        <HypothesisVerification />
+        ) : null}
+
+        {boardSurfaceTab === "analysis" && analysisViewTab === "hypothesis" ? (
+          <div className="record-board-subsection">
+            <HypothesisVerification embedded />
+          </div>
+        ) : null}
+          </div>
+        </div>
       </div>
     </section>
   );

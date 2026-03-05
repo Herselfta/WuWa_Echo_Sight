@@ -18,7 +18,7 @@ import type {
   TransitionMatrix,
 } from "../types/domain";
 
-export function HypothesisVerification() {
+export function HypothesisVerification({ embedded = false }: { embedded?: boolean }) {
   const { statDefs } = useAppStore();
   const [message, setMessage] = useState("");
   
@@ -63,8 +63,7 @@ export function HypothesisVerification() {
   };
 
   return (
-    <>
-      <div className="card">
+    <div className={embedded ? "hypothesis-shell" : "card"}>
         <h3>假设验证</h3>
         <div className="inline-row" style={{ flexWrap: "wrap" }}>
           {message ? <span className="message">{message}</span> : null}
@@ -369,8 +368,7 @@ export function HypothesisVerification() {
             )}
           </div>
         )}
-      </div>
-    </>
+    </div>
   );
 }
 
