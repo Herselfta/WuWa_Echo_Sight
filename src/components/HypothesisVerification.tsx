@@ -146,19 +146,6 @@ export function HypothesisVerification({
               <option value="abandoned">abandoned</option>
             </select>
           </label>
-          {activeTab === "reversion" ? (
-            <label style={{ fontSize: 12, marginLeft: 8 }}>
-              窗口
-              <input
-                type="number"
-                min={5}
-                max={30}
-                value={revWindowSize}
-                onChange={(e) => setRevWindowSize(e.target.value)}
-                style={{ width: 48, marginLeft: 4 }}
-              />
-            </label>
-          ) : null}
         </div>
 
         {/* Tab navigation */}
@@ -352,6 +339,9 @@ export function HypothesisVerification({
               <ReversionPanel
                 data={reversionData}
                 selectedStats={revSelectedStats}
+                windowSize={revWindowSize}
+                onWindowSizeChange={setRevWindowSize}
+                onSetSelectedStats={setRevSelectedStats}
                 onToggleStat={(key) =>
                   setRevSelectedStats((prev) =>
                     prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
@@ -375,14 +365,22 @@ export function HypothesisVerification({
 function ReversionPanel({
   data,
   selectedStats,
+  windowSize,
+  onWindowSizeChange,
+  onSetSelectedStats,
   onToggleStat,
 }: {
   data: ReversionReport;
   selectedStats: string[];
+  windowSize: string;
+  onWindowSizeChange: (value: string) => void;
+  onSetSelectedStats: (keys: string[]) => void;
   onToggleStat: (key: string) => void;
 }) {
   const active = data.statSeries.filter((s) => s.totalCount > 0);
   const selected = active.filter((s) => selectedStats.includes(s.statKey));
+  const defaultKeys = active.slice(0, 5).map((s) => s.statKey);
+  const allKeys = active.map((s) => s.statKey);
 
   return (
     <div>
@@ -410,6 +408,52 @@ function ReversionPanel({
             </button>
           );
         })}
+        <button
+          type="button"
+          onClick={() => onSetSelectedStats(defaultKeys)}
+          style={{
+            fontSize: 11,
+            padding: "2px 8px",
+            borderRadius: 4,
+            border: "1px dashed var(--line)",
+            background: "var(--panel)",
+            color: "var(--ink)",
+            cursor: "pointer",
+          }}
+          title="恢复默认：前 5 个高频词条"
+        >
+          恢复默认
+        </button>
+        <button
+          type="button"
+          onClick={() => onSetSelectedStats(allKeys)}
+          style={{
+            fontSize: 11,
+            padding: "2px 8px",
+            borderRadius: 4,
+            border: "1px dashed var(--line)",
+            background: "var(--panel)",
+            color: "var(--ink)",
+            cursor: "pointer",
+          }}
+        >
+          全选
+        </button>
+        <button
+          type="button"
+          onClick={() => onSetSelectedStats([])}
+          style={{
+            fontSize: 11,
+            padding: "2px 8px",
+            borderRadius: 4,
+            border: "1px dashed var(--line)",
+            background: "var(--panel)",
+            color: "var(--ink)",
+            cursor: "pointer",
+          }}
+        >
+          清空
+        </button>
       </div>
 
       {/* Deviation line chart */}
@@ -506,7 +550,20 @@ function ReversionPanel({
         </div>
         {/* Window conditional table */}
         <div className="reversion-half-panel reversion-window-panel">
-          <strong style={{ fontSize: 13 }}>窗口条件频率（前 W 次出现次数 → 后 W 次出现率）</strong>
+          <div className="inline-row" style={{ justifyContent: "space-between", gap: 8 }}>
+            <strong style={{ fontSize: 13 }}>窗口条件频率（前 W 次出现次数 → 后 W 次出现率）</strong>
+            <label style={{ fontSize: 12 }}>
+              窗口 W
+              <input
+                type="number"
+                min={5}
+                max={30}
+                value={windowSize}
+                onChange={(e) => onWindowSizeChange(e.target.value)}
+                style={{ width: 56, marginLeft: 4 }}
+              />
+            </label>
+          </div>
           <p style={{ fontSize: 11, color: "var(--ink-dim)", margin: "2px 0 6px" }}>
             若在前 W 事件中出现越多，后 W 出现率越低 → 均值回归；反之 → 聚集。
           </p>
