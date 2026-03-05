@@ -381,7 +381,7 @@ wuwa-echo-sight/
 │   ├── pages/                    #   页面组件
 │   │   ├── RecordPage.tsx        #     统一看板
 │   │   ├── EchoPoolPage.tsx      #     声骸池管理
-│   │   └── AnalysisPage.tsx      #     数据工具
+│   │   └── DataToolsPage.tsx     #     数据工具
 │   ├── store/useAppStore.ts      #   Zustand 全局状态
 │   └── types/domain.ts           #   TypeScript 类型定义
 ├── src-tauri/                    # 后端 (Rust + Tauri)
@@ -390,12 +390,14 @@ wuwa-echo-sight/
 │   │   ├── commands/             #   IPC 命令实现
 │   │   │   ├── echo.rs           #     声骸 CRUD、预设、回填
 │   │   │   ├── event.rs          #     强化事件录入/编辑/查询
-│   │   │   ├── analysis.rs       #     概率分布 & 命中计算
+│   │   │   ├── probability.rs    #     概率分布 & 命中计算
+│   │   │   ├── verification.rs   #     假设验证（转移/连段/回归）
+│   │   │   ├── decision.rs       #     当日模式决策
 │   │   │   └── export.rs         #     CSV 导出 & ZIP 导入
 │   │   ├── db/                   #   数据库初始化 & 迁移
 │   │   │   └── migrations/       #     SQL 迁移脚本
 │   │   ├── domain/               #   领域类型
-│   │   └── analysis/             #   统计算法模块
+│   │   └── stats/                #   统计算法模块
 │   └── Cargo.toml
 ├── package.json
 ├── vite.config.ts

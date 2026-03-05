@@ -1,13 +1,11 @@
-mod analysis;
 mod commands;
 mod db;
 mod domain;
+mod stats;
 
 use tauri::Manager;
 
-use commands::analysis::{
-    create_probability_snapshot, get_echoes_for_stat, get_global_distribution,
-};
+use commands::decision::get_daily_pattern_decision;
 use commands::echo::{
     create_echo, delete_echo, delete_expectation_preset, list_echoes, list_expectation_presets,
     list_stat_defs, save_expectation_preset, set_expectations, update_echo, upsert_backfill_state,
@@ -16,10 +14,12 @@ use commands::event::{
     append_ordered_event, delete_ordered_event, edit_ordered_event, get_event_history,
 };
 use commands::export::{export_csv, import_data};
-use commands::hypothesis::{
+use commands::probability::{
+    create_probability_snapshot, get_echoes_for_stat, get_global_distribution,
+};
+use commands::verification::{
     get_category_streak_analysis, get_reversion_analysis, get_transition_matrix,
 };
-use commands::pattern::get_daily_pattern_decision;
 use db::{init_database, AppState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

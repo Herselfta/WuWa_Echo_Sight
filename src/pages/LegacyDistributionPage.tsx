@@ -14,7 +14,7 @@ function toLocalInputValue(date: Date): string {
   )}:${pad(date.getMinutes())}`;
 }
 
-export function DistributionPage() {
+export function LegacyDistributionPage() {
   const {
     statDefs,
     distribution,

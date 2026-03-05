@@ -20,7 +20,7 @@ function toLocalInputValue(iso: string): string {
   )}:${pad(date.getMinutes())}`;
 }
 
-export function AnalysisPage() {
+export function DataToolsPage() {
   const { distributionFilter, selectedStatKey, loadBootData } = useAppStore();
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventId, setEventId] = useState("");

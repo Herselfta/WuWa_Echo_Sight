@@ -8,6 +8,7 @@ use crate::domain::types::{
     CategoryStreakReport, CategoryStreakRow, HypothesisFilter, ReversionBucket, ReversionReport,
     StatReversionSeries, TransitionCell, TransitionMatrix,
 };
+use crate::stats::expected_tier_adjacency_ratios_for_stat;
 
 /* ═══════════════════════════════════════════════════════
 Stat categories for zone hypothesis
@@ -159,6 +160,28 @@ fn list_stat_keys(conn: &Connection) -> Result<Vec<(String, String)>, String> {
         .map_err(|e| format!("failed to collect stat_defs: {e}"))
 }
 
+fn expected_transition_without_replacement(
+    from_idx: usize,
+    to_idx: usize,
+    row_total: i64,
+    col_probs: &[f64],
+) -> f64 {
+    if row_total <= 0
+        || from_idx == to_idx
+        || from_idx >= col_probs.len()
+        || to_idx >= col_probs.len()
+    {
+        return 0.0;
+    }
+    let from_mass = col_probs[from_idx];
+    let denom = 1.0 - from_mass;
+    if denom <= 1e-12 {
+        return 0.0;
+    }
+    let conditional_p = col_probs[to_idx] / denom;
+    row_total as f64 * conditional_p
+}
+
 /* ═══════════════════════════════════════════════════════
 1. Transition matrix — stat(slot_i) → stat(slot_{i+1})
 ═══════════════════════════════════════════════════════ */
@@ -198,14 +221,24 @@ pub fn get_transition_matrix(
         }
     }
 
-    // χ² goodness-of-fit vs independence assumption
-    // Under H0: P(to | from) = P(to) (marginal probability)
+    // χ² goodness-of-fit under structural "no duplicate substat per echo":
+    // expected(from=i,to=i) is forced to 0; non-diagonal cells are
+    // re-normalized from global marginals as first-order approximation.
     let row_sums: Vec<i64> = matrix.iter().map(|row| row.iter().sum()).collect();
     let col_sums: Vec<i64> = (0..n)
         .map(|j| matrix.iter().map(|row| row[j]).sum::<i64>())
         .collect();
+    let col_probs: Vec<f64> = if total_transitions > 0 {
+        col_sums
+            .iter()
+            .map(|&v| v as f64 / total_transitions as f64)
+            .collect()
+    } else {
+        vec![0.0; n]
+    };
 
     let mut chi_squared = 0.0f64;
+    let mut effective_cells = 0i64;
 
     // Only compute for cells where both row_sum > 0 and col_sum > 0
     // (otherwise observed must be 0 and expected ~0)
@@ -214,15 +247,11 @@ pub fn get_transition_matrix(
 
     if total_transitions > 0 {
         for &i in &active_rows {
-            // Under H0 a from‑stat has been removed from the pool,
-            // so the available portion of the remaining candidates should
-            // be re‑normalised — but with real data we cannot know which
-            // candidates were available per echo. As a first‑order
-            // approximation we use the global marginal.
             for &j in &active_cols {
                 let expected =
-                    (row_sums[i] as f64) * (col_sums[j] as f64) / (total_transitions as f64);
+                    expected_transition_without_replacement(i, j, row_sums[i], &col_probs);
                 if expected > 0.0 {
+                    effective_cells += 1;
                     let observed = matrix[i][j] as f64;
                     chi_squared += (observed - expected).powi(2) / expected;
                 }
@@ -230,10 +259,14 @@ pub fn get_transition_matrix(
         }
     }
 
-    // df = (active_rows - 1) * (active_cols - 1)
+    // Approximate df for sparse contingency with structural zeros.
     let ar = active_rows.len() as i64;
     let ac = active_cols.len() as i64;
-    let df = (ar.max(1) - 1) * (ac.max(1) - 1);
+    let df = if effective_cells > 0 {
+        (effective_cells - ar - ac + 1).max(1)
+    } else {
+        0
+    };
 
     // approximate p-value using normal approximation for large df
     let p_value = if df > 0 {
@@ -247,26 +280,19 @@ pub fn get_transition_matrix(
     for (i, from_key) in key_list.iter().enumerate() {
         for (j, to_key) in key_list.iter().enumerate() {
             let count = matrix[i][j];
-            if count > 0 || true {
-                // include all for full matrix
-                let expected = if total_transitions > 0 && row_sums[i] > 0 {
-                    (row_sums[i] as f64) * (col_sums[j] as f64) / (total_transitions as f64)
-                } else {
-                    0.0
-                };
-                let residual = if expected > 0.0 {
-                    (count as f64 - expected) / expected.sqrt()
-                } else {
-                    0.0
-                };
-                cells.push(TransitionCell {
-                    from_stat: from_key.clone(),
-                    to_stat: to_key.clone(),
-                    count,
-                    expected,
-                    residual,
-                });
-            }
+            let expected = expected_transition_without_replacement(i, j, row_sums[i], &col_probs);
+            let residual = if expected > 0.0 {
+                (count as f64 - expected) / expected.sqrt()
+            } else {
+                0.0
+            };
+            cells.push(TransitionCell {
+                from_stat: from_key.clone(),
+                to_stat: to_key.clone(),
+                count,
+                expected,
+                residual,
+            });
         }
     }
 
@@ -304,11 +330,11 @@ pub fn get_category_streak_analysis(
     let mut zone_visit_counts: HashMap<String, i64> = HashMap::new();
 
     // tier analysis accumulators
-    let mut tier_pairs_same_stat: Vec<(i64, i64)> = Vec::new(); // (prev_tier, curr_tier) for consecutive same stat type cross-echo
     let mut tier_stop_count = 0i64; // same tier
     let mut tier_step_count = 0i64; // ±1
     let mut tier_jump_count = 0i64; // > ±1
     let mut tier_total_pairs = 0i64;
+    let mut tier_pair_counts_by_stat: HashMap<String, i64> = HashMap::new();
 
     for (echo_id, events) in &sequences {
         if events.is_empty() {
@@ -407,8 +433,10 @@ pub fn get_category_streak_analysis(
         for (stat_key, tier_index) in tier_rows {
             if let Some((ref prev_stat, prev_tier)) = prev {
                 if prev_stat == &stat_key {
-                    tier_pairs_same_stat.push((prev_tier, tier_index));
                     tier_total_pairs += 1;
+                    *tier_pair_counts_by_stat
+                        .entry(stat_key.clone())
+                        .or_insert(0) += 1;
                     let diff = (tier_index - prev_tier).abs();
                     if diff == 0 {
                         tier_stop_count += 1;
@@ -423,10 +451,37 @@ pub fn get_category_streak_analysis(
         }
     }
 
-    // expected under uniform: P(stop) = 1/N_tiers, P(step) depends on tier
-    // With 8 tiers uniform: P(same) = 1/8 = 12.5%, P(±1) ≈ 2/8 = 25% (edges: 1/8)
-    // Average P(±1) for uniform 8-tier = (2*6 + 1*2) / (8*8) = 14/64 = 21.875%
-    // For 4-tier stats: P(same) = 1/4 = 25%, P(±1) = (2*2 + 1*2) / (4*4) = 6/16 = 37.5%
+    // Weighted baseline expectation by observed pair composition per stat.
+    let mut expected_stop_weighted = 0.0f64;
+    let mut expected_step_weighted = 0.0f64;
+    let mut expected_jump_weighted = 0.0f64;
+    let mut expected_weight_total = 0.0f64;
+    for (stat_key, pair_count) in &tier_pair_counts_by_stat {
+        let Some((exp_stop, exp_step, exp_jump)) =
+            expected_tier_adjacency_ratios_for_stat(stat_key)
+        else {
+            continue;
+        };
+        let w = (*pair_count).max(0) as f64;
+        if w <= 0.0 {
+            continue;
+        }
+        expected_stop_weighted += exp_stop * w;
+        expected_step_weighted += exp_step * w;
+        expected_jump_weighted += exp_jump * w;
+        expected_weight_total += w;
+    }
+
+    let (tier_expected_stop_ratio, tier_expected_step_ratio, tier_expected_jump_ratio) =
+        if expected_weight_total > 0.0 {
+            (
+                Some(expected_stop_weighted / expected_weight_total),
+                Some(expected_step_weighted / expected_weight_total),
+                Some(expected_jump_weighted / expected_weight_total),
+            )
+        } else {
+            (None, None, None)
+        };
 
     // Sort streaks by length descending
     rows.sort_by(|a, b| {
@@ -468,6 +523,9 @@ pub fn get_category_streak_analysis(
         } else {
             0.0
         },
+        tier_expected_stop_ratio,
+        tier_expected_step_ratio,
+        tier_expected_jump_ratio,
     })
 }
 

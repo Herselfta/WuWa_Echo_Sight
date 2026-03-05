@@ -10,7 +10,7 @@ use tauri::State;
 use zip::write::SimpleFileOptions;
 use zip::ZipArchive;
 
-use crate::commands::analysis::get_global_distribution_internal;
+use crate::commands::probability::get_global_distribution_internal;
 use crate::db::{open_connection, AppState};
 use crate::domain::types::{ExportCsvInput, ExportCsvOutput, ImportDataInput, ImportDataOutput};
 

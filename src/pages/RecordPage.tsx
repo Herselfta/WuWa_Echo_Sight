@@ -1953,6 +1953,9 @@ export function RecordPage() {
               应用手动分析
             </button>
           </div>
+          <p className="hint" style={{ marginBottom: 8 }}>
+            决策模式按当日全量事件建模。
+          </p>
           {patternDecision ? (
             <>
               <p className="hint" style={{ marginBottom: 8 }}>

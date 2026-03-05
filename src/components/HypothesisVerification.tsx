@@ -243,9 +243,15 @@ export function HypothesisVerification({
                   &nbsp;|&nbsp; 跳档 (≥2):{" "}
                   <strong>{(streakData.tierJumpRatio * 100).toFixed(1)}%</strong>
                 </p>
-                <p style={{ fontSize: 12, color: "var(--ink-dim)", marginBottom: 12 }}>
-                  均匀 8 档理论值: 停档 12.5% | 连档 21.9% | 跳档 65.6%
-                </p>
+                {streakData.tierExpectedStopRatio !== null &&
+                streakData.tierExpectedStepRatio !== null &&
+                streakData.tierExpectedJumpRatio !== null ? (
+                  <p style={{ fontSize: 12, color: "var(--ink-dim)", marginBottom: 12 }}>
+                    文档基线（非均匀档位）: 停档 {(streakData.tierExpectedStopRatio * 100).toFixed(1)}% |
+                    连档 {(streakData.tierExpectedStepRatio * 100).toFixed(1)}% |
+                    跳档 {(streakData.tierExpectedJumpRatio * 100).toFixed(1)}%
+                  </p>
+                ) : null}
 
                 {/* Zone visits */}
                 {streakData.zoneVisits.length > 0 && (

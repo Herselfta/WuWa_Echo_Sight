@@ -490,6 +490,9 @@ pub struct CategoryStreakReport {
     pub tier_stop_ratio: f64,
     pub tier_step_ratio: f64,
     pub tier_jump_ratio: f64,
+    pub tier_expected_stop_ratio: Option<f64>,
+    pub tier_expected_step_ratio: Option<f64>,
+    pub tier_expected_jump_ratio: Option<f64>,
 }
 
 /* ═══ Reversion analysis ═══ */

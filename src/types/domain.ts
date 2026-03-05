@@ -103,9 +103,6 @@ export interface EventRow {
 
 export interface DailyPatternDecisionFilter {
   gameDay?: string;
-  costClass?: number;
-  mainStatKey?: string;
-  status?: string;
   manualStartIndex?: number;
   manualCycleLen?: number;
   manualGuessShapes?: string[];
@@ -240,6 +237,9 @@ export interface CategoryStreakReport {
   tierStopRatio: number;
   tierStepRatio: number;
   tierJumpRatio: number;
+  tierExpectedStopRatio: number | null;
+  tierExpectedStepRatio: number | null;
+  tierExpectedJumpRatio: number | null;
 }
 
 /* ═══ Reversion analysis ═══ */

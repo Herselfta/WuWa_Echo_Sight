@@ -128,4 +128,5 @@ INSERT OR IGNORE INTO app_settings(key, value) VALUES
   ('analysis_window', '200'),
   ('mc_iterations', '20000'),
   ('smoothing_alpha', '1.0'),
+  ('baseline_blend', '0.65'),
   ('confidence_level', '0.95');

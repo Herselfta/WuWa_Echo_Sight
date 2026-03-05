@@ -6,11 +6,13 @@ use rusqlite::{params, params_from_iter, Connection};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::analysis::{bayes_interval, monte_carlo_final_prob, wilson_interval};
 use crate::db::{get_setting_f64, get_setting_i64, now_rfc3339, open_connection, AppState};
 use crate::domain::types::{
     CreateProbabilitySnapshotInput, CreateProbabilitySnapshotOutput, DistributionFilter,
     DistributionPayload, DistributionRow, EchoProbFilter, EchoProbRow,
+};
+use crate::stats::{
+    bayes_interval, blended_stat_probabilities, monte_carlo_final_prob, wilson_interval,
 };
 
 fn build_distribution_where(filter: &DistributionFilter) -> (String, Vec<rusqlite::types::Value>) {
@@ -165,13 +167,13 @@ pub fn get_echoes_for_stat_internal(
 
     let (_, count_map) = load_event_counts(conn, &scope)?;
     let smoothing_alpha = get_setting_f64(conn, "smoothing_alpha", 1.0).max(0.0001);
+    let baseline_blend = get_setting_f64(conn, "baseline_blend", 0.65).clamp(0.0, 1.0);
     let mc_iterations = get_setting_i64(conn, "mc_iterations", 20000).clamp(500, 50000) as usize;
 
-    let mut weight_map: HashMap<String, f64> = HashMap::new();
-    for stat_key in &all_stat_keys {
-        let base = *count_map.get(stat_key).unwrap_or(&0) as f64;
-        weight_map.insert(stat_key.clone(), base + smoothing_alpha);
-    }
+    // Use a stable baseline-first prior (uniform over enabled stats),
+    // then blend observed frequencies to avoid purely drift-driven guidance.
+    let weight_map =
+        blended_stat_probabilities(&all_stat_keys, &count_map, baseline_blend, smoothing_alpha);
 
     let mut conditions = vec![
         "e.opened_slots_count < 5".to_string(),

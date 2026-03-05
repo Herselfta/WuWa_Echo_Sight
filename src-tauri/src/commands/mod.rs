@@ -1,6 +1,6 @@
-pub mod analysis;
+pub mod decision;
 pub mod echo;
 pub mod event;
 pub mod export;
-pub mod hypothesis;
-pub mod pattern;
+pub mod probability;
+pub mod verification;
