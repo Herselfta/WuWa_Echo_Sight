@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  DailyPatternDecisionFilter,
+  DailyPatternDecisionReport,
   CategoryStreakReport,
   DistributionFilter,
   DistributionPayload,
@@ -143,6 +145,14 @@ export async function exportCsv(input: {
 
 export async function importData(zipPath: string): Promise<{ ok: boolean; importedTables: string[] }> {
   return invoke("import_data", { input: { zipPath } });
+}
+
+/* ═══ Daily pattern decision (MVP) ═══ */
+
+export async function getDailyPatternDecision(
+  filter?: DailyPatternDecisionFilter,
+): Promise<DailyPatternDecisionReport> {
+  return invoke("get_daily_pattern_decision", { filter });
 }
 
 /* ═══ Hypothesis verification ═══ */

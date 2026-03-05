@@ -3,6 +3,7 @@ import {
   appendOrderedEvent,
   createEcho,
   deleteOrderedEvent,
+  getDailyPatternDecision,
   getEchoesForStat,
   getEventHistory,
   getGlobalDistribution,
@@ -27,6 +28,7 @@ import {
 import { useChainSelectionDismiss } from "../hooks/useChainSelectionDismiss";
 import { useAppStore } from "../store/useAppStore";
 import type {
+  DailyPatternDecisionReport,
   DistributionFilter,
   DistributionPayload,
   EchoProbRow,
@@ -65,6 +67,17 @@ function formatScaledValue(unit: string, valueScaled: number) {
 
 function toPercent(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
+}
+
+function parseGuessShapes(raw: string): string[] {
+  const uniq = new Set<string>();
+  for (const token of raw.split(/[\\s,，;；|]+/)) {
+    const normalized = token.toUpperCase().replace(/[^A-Z]/g, "");
+    if (normalized.length >= 2) {
+      uniq.add(normalized);
+    }
+  }
+  return Array.from(uniq);
 }
 
 /* ── chain helpers (same logic as EchoPoolPage) ───── */
@@ -219,6 +232,12 @@ export function RecordPage() {
   const [distribution, setDistribution] = useState<DistributionPayload | null>(null);
   const [selectedDistStatKey, setSelectedDistStatKey] = useState<string | null>(null);
   const [echoProbRows, setEchoProbRows] = useState<EchoProbRow[]>([]);
+  const [patternDecision, setPatternDecision] = useState<DailyPatternDecisionReport | null>(null);
+  const [patternManualStartStr, setPatternManualStartStr] = useState("0");
+  const [patternManualCycleStr, setPatternManualCycleStr] = useState("5");
+  const [patternManualGuessStr, setPatternManualGuessStr] = useState("AABCB, ABA");
+  const [patternAutoMinLenStr, setPatternAutoMinLenStr] = useState("3");
+  const [patternConfigVersion, setPatternConfigVersion] = useState(0);
   const [sortBy, setSortBy] = useState("pFinal");
 
   /* === misc === */
@@ -226,6 +245,7 @@ export function RecordPage() {
   const [undoConfirmId, setUndoConfirmId] = useState<string | null>(null);
   const [loadingDist, setLoadingDist] = useState(false);
   const [loadingProb, setLoadingProb] = useState(false);
+  const [loadingPatternDecision, setLoadingPatternDecision] = useState(false);
   const [message, setMessage] = useState("");
   const [msgKind, setMsgKind] = useState<"info" | "success" | "error">("info");
   const [messageId, setMessageId] = useState(0);
@@ -423,8 +443,32 @@ export function RecordPage() {
     } finally { setLoadingProb(false); }
   };
 
+  const loadPatternDecision = async () => {
+    setLoadingPatternDecision(true);
+    try {
+      const manualStartIndex = Math.max(0, Number(patternManualStartStr) || 0);
+      const manualCycleLen = Math.max(2, Number(patternManualCycleStr) || 5);
+      const autoMinLen = Math.max(2, Number(patternAutoMinLenStr) || 3);
+      const manualGuessShapes = parseGuessShapes(patternManualGuessStr);
+      const report = await getDailyPatternDecision({
+        manualStartIndex,
+        manualCycleLen,
+        manualGuessShapes,
+        minLen: autoMinLen,
+        maxLen: Math.max(autoMinLen, manualCycleLen + 1),
+        minSupport: 2,
+        maxOrder: 5,
+        topK: 10,
+      });
+      setPatternDecision(report);
+    } finally {
+      setLoadingPatternDecision(false);
+    }
+  };
+
   // mount fetching
   useEffect(() => { void loadDistribution(); }, []);
+  useEffect(() => { void loadPatternDecision(); }, [patternConfigVersion]);
   // history fetching
   useEffect(() => { void loadHistory(parsedHistoryLimit, historyTodayOnly); }, [parsedHistoryLimit, historyTodayOnly]);
 
@@ -647,7 +691,7 @@ export function RecordPage() {
         tierIndex,
         eventTime: normalizeLocalTime(eventTimeLocal),
       });
-      await Promise.all([refreshEchoes(), loadHistory(), loadDistribution()]);
+      await Promise.all([refreshEchoes(), loadHistory(), loadDistribution(), loadPatternDecision()]);
       await loadEchoProbRows();
       showMsg(`录入成功  ·  eventId: ${result.eventId.slice(0, 8)}`, "success");
     } catch (error) {
@@ -667,7 +711,7 @@ export function RecordPage() {
     showMsg("");
     try {
       await deleteOrderedEvent({ eventId });
-      await Promise.all([refreshEchoes(), loadHistory(), loadDistribution()]);
+      await Promise.all([refreshEchoes(), loadHistory(), loadDistribution(), loadPatternDecision()]);
       await loadEchoProbRows();
       showMsg("已撤销最近一次录入。", "success");
     } catch (error) {
@@ -1693,6 +1737,232 @@ export function RecordPage() {
               {loadingProb ? <p className="hint" style={{ textAlign: "center", padding: "8px" }}>加载中...</p> : null}
             </div>
           </div>
+        </div>
+
+        <div className="card record-card" style={{ marginTop: 12 }}>
+          <div className="record-card-header">
+            <span className="record-section-title">今日模式决策 (MVP)</span>
+            <span className="record-card-meta">
+              {patternDecision?.gameDay ? `${patternDecision.gameDay} · 事件 ${patternDecision.totalEvents}` : "暂无"}
+              {loadingPatternDecision ? " · 更新中..." : ""}
+            </span>
+          </div>
+          <div className="inline-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+            <label style={{ fontSize: 12 }}>
+              起点
+              <input
+                type="number"
+                min={0}
+                value={patternManualStartStr}
+                onChange={(e) => setPatternManualStartStr(e.target.value)}
+                style={{ width: 70, marginLeft: 4 }}
+              />
+            </label>
+            <label style={{ fontSize: 12 }}>
+              假设手数
+              <input
+                type="number"
+                min={2}
+                max={20}
+                value={patternManualCycleStr}
+                onChange={(e) => setPatternManualCycleStr(e.target.value)}
+                style={{ width: 70, marginLeft: 4 }}
+              />
+            </label>
+            <label style={{ fontSize: 12 }}>
+              自动最短模式
+              <input
+                type="number"
+                min={2}
+                max={12}
+                value={patternAutoMinLenStr}
+                onChange={(e) => setPatternAutoMinLenStr(e.target.value)}
+                style={{ width: 70, marginLeft: 4 }}
+              />
+            </label>
+            <label style={{ fontSize: 12, minWidth: 280 }}>
+              猜测形态
+              <input
+                value={patternManualGuessStr}
+                onChange={(e) => setPatternManualGuessStr(e.target.value)}
+                placeholder="例: AABCB, ABA"
+                style={{ width: 240, marginLeft: 4 }}
+              />
+            </label>
+            <button type="button" onClick={() => setPatternConfigVersion((v) => v + 1)} disabled={loadingPatternDecision}>
+              应用手动分析
+            </button>
+          </div>
+          {patternDecision ? (
+            <>
+              <p className="hint" style={{ marginBottom: 8 }}>
+                置信度 {toPercent(patternDecision.modelConfidence)} · 模式长度 {patternDecision.minLen}-{patternDecision.maxLen} · 最小支持 {patternDecision.minSupport}
+              </p>
+              <div className="record-dist-table-wrap">
+                <table className="table compact-table">
+                  <thead>
+                    <tr>
+                      <th>建议词条</th>
+                      <th>P(mix)</th>
+                      <th>P(base)</th>
+                      <th>P(markov)</th>
+                      <th>P(cycle)</th>
+                      <th>Boost</th>
+                      <th>触发模式</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {patternDecision.suggestions.map((s) => (
+                      <tr key={s.statKey}>
+                        <td>{s.displayName}</td>
+                        <td>{toPercent(s.probability)}</td>
+                        <td>{toPercent(s.baseProbability)}</td>
+                        <td>{toPercent(s.markovProbability)}</td>
+                        <td>{toPercent(s.cycleProbability)}</td>
+                        <td>{s.motifBoost.toFixed(2)}</td>
+                        <td style={{ fontSize: 11, textAlign: "left" }}>
+                          {s.matchedPatterns.length > 0 ? s.matchedPatterns.join(" | ") : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                    {patternDecision.suggestions.length === 0 ? (
+                      <tr><td colSpan={7} className="chain-empty">暂无可用建议</td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+
+              {patternDecision.manualSummary ? (
+                <div style={{ marginTop: 10 }}>
+                  <strong style={{ fontSize: 13 }}>
+                    手动验证 · start={patternDecision.manualSummary.startIndex}, L={patternDecision.manualSummary.cycleLen}, full={patternDecision.manualSummary.fullCycles}, nextPos={patternDecision.manualSummary.nextCyclePos}
+                  </strong>
+                  <div className="inline-row" style={{ flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                    {patternDecision.manualSummary.topCycleShapes.map(([shape, cnt]) => (
+                      <span
+                        key={`${shape}-${cnt}`}
+                        style={{
+                          fontSize: 11,
+                          padding: "2px 8px",
+                          borderRadius: 4,
+                          border: "1px solid var(--line)",
+                          background: "var(--panel)",
+                        }}
+                      >
+                        {shape}: {cnt}
+                      </span>
+                    ))}
+                    {patternDecision.manualSummary.topCycleShapes.length === 0 ? (
+                      <span className="chain-empty">暂无完整周期形态</span>
+                    ) : null}
+                  </div>
+                  <div className="record-dist-table-wrap" style={{ marginTop: 6 }}>
+                    <table className="table compact-table">
+                      <thead>
+                        <tr>
+                          <th>猜测</th>
+                          <th>hit/opp</th>
+                          <th>HitRate</th>
+                          <th>Baseline</th>
+                          <th>Lift</th>
+                          <th>下一个提示</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {patternDecision.manualSummary.guesses.map((g) => (
+                          <tr key={g.guessShape}>
+                            <td>{g.guessShape}</td>
+                            <td>{g.support}/{g.opportunities}</td>
+                            <td>{toPercent(g.hitRate)}</td>
+                            <td>{toPercent(g.baselineRate)}</td>
+                            <td>{g.lift > 0 ? g.lift.toFixed(2) : "—"}</td>
+                            <td>{g.nextStatHint ?? "—"}</td>
+                          </tr>
+                        ))}
+                        {patternDecision.manualSummary.guesses.length === 0 ? (
+                          <tr><td colSpan={6} className="chain-empty">未配置有效猜测形态</td></tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                  {patternDecision.manualSummary.positionSuggestions.length > 0 ? (
+                    <div className="inline-row" style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                      {patternDecision.manualSummary.positionSuggestions.map((p) => (
+                        <span
+                          key={p.statKey}
+                          style={{
+                            fontSize: 11,
+                            padding: "2px 8px",
+                            borderRadius: 4,
+                            border: "1px dashed var(--line)",
+                            background: "var(--panel)",
+                          }}
+                        >
+                          next@pos: {p.displayName} {toPercent(p.probability)} (n={p.count})
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div style={{ marginTop: 8 }}>
+                <strong style={{ fontSize: 13 }}>高分模式</strong>
+                <div className="inline-row" style={{ flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {patternDecision.exactPatterns.slice(0, 8).map((p, idx) => (
+                    <span
+                      key={`${p.shape}-${idx}`}
+                      style={{
+                        fontSize: 11,
+                        padding: "2px 8px",
+                        borderRadius: 4,
+                        background: "var(--panel)",
+                        border: "1px solid var(--line)",
+                      }}
+                      title={`期望 ${p.expectedCount.toFixed(2)} · score ${p.score.toFixed(2)}`}
+                    >
+                      L{p.length} {p.shape} · n={p.support} · lift={p.lift.toFixed(2)}
+                    </span>
+                  ))}
+                  {patternDecision.exactPatterns.length === 0 ? (
+                    <span className="chain-empty">暂无满足支持度的模式</span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div style={{ marginTop: 8 }}>
+                <strong style={{ fontSize: 13 }}>形态模式（组合视角）</strong>
+                <div className="inline-row" style={{ flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {patternDecision.shapePatterns.slice(0, 8).map((p, idx) => (
+                    <span
+                      key={`${p.shape}-${p.length}-${idx}`}
+                      style={{
+                        fontSize: 11,
+                        padding: "2px 8px",
+                        borderRadius: 4,
+                        background: "var(--panel)",
+                        border: "1px dashed var(--line)",
+                      }}
+                      title={p.examplePatterns.join(" | ")}
+                    >
+                      L{p.length} {p.shape} · n={p.support} · lift={p.lift.toFixed(2)}
+                    </span>
+                  ))}
+                  {patternDecision.shapePatterns.length === 0 ? (
+                    <span className="chain-empty">暂无稳定形态组合</span>
+                  ) : null}
+                </div>
+              </div>
+
+              {patternDecision.notes.length > 0 ? (
+                <p className="hint" style={{ marginTop: 8 }}>
+                  {patternDecision.notes.join(" ｜ ")}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="hint">暂无数据</p>
+          )}
         </div>
         <HypothesisVerification />
       </div>

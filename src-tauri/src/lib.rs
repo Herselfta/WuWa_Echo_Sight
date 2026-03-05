@@ -20,6 +20,7 @@ use commands::hypothesis::{
     get_category_streak_analysis, get_reversion_analysis, get_slot_stat_distribution,
     get_transition_matrix,
 };
+use commands::pattern::get_daily_pattern_decision;
 use db::{init_database, AppState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -66,6 +67,7 @@ pub fn run() {
             get_slot_stat_distribution,
             get_category_streak_analysis,
             get_reversion_analysis,
+            get_daily_pattern_decision,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

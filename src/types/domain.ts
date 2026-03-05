@@ -99,6 +99,100 @@ export interface EventRow {
   createdAt: string;
 }
 
+/* ═══ Daily pattern decision (MVP) ═══ */
+
+export interface DailyPatternDecisionFilter {
+  gameDay?: string;
+  costClass?: number;
+  mainStatKey?: string;
+  status?: string;
+  manualStartIndex?: number;
+  manualCycleLen?: number;
+  manualGuessShapes?: string[];
+  minLen?: number;
+  maxLen?: number;
+  minSupport?: number;
+  maxOrder?: number;
+  topK?: number;
+}
+
+export interface DailyExactPatternRow {
+  length: number;
+  pattern: string[];
+  displayPattern: string[];
+  shape: string;
+  support: number;
+  windowCount: number;
+  expectedCount: number;
+  lift: number;
+  score: number;
+}
+
+export interface DailyShapePatternRow {
+  length: number;
+  shape: string;
+  support: number;
+  expectedCount: number;
+  lift: number;
+  score: number;
+  examplePatterns: string[];
+}
+
+export interface AdaptiveNextSuggestion {
+  statKey: string;
+  displayName: string;
+  probability: number;
+  baseProbability: number;
+  markovProbability: number;
+  cycleProbability: number;
+  motifBoost: number;
+  matchedPatterns: string[];
+}
+
+export interface ManualGuessVerificationRow {
+  guessShape: string;
+  length: number;
+  support: number;
+  opportunities: number;
+  hitRate: number;
+  baselineRate: number;
+  lift: number;
+  matchedCycleIndices: number[];
+  nextStatHint: string | null;
+}
+
+export interface ManualCycleSuggestion {
+  statKey: string;
+  displayName: string;
+  count: number;
+  probability: number;
+}
+
+export interface ManualPatternSummary {
+  startIndex: number;
+  cycleLen: number;
+  fullCycles: number;
+  nextCyclePos: number;
+  topCycleShapes: [string, number][];
+  guesses: ManualGuessVerificationRow[];
+  positionSuggestions: ManualCycleSuggestion[];
+}
+
+export interface DailyPatternDecisionReport {
+  gameDay: string;
+  totalEvents: number;
+  minLen: number;
+  maxLen: number;
+  minSupport: number;
+  maxOrder: number;
+  modelConfidence: number;
+  exactPatterns: DailyExactPatternRow[];
+  shapePatterns: DailyShapePatternRow[];
+  suggestions: AdaptiveNextSuggestion[];
+  manualSummary?: ManualPatternSummary | null;
+  notes: string[];
+}
+
 /* ═══ Hypothesis verification types ═══ */
 
 export interface HypothesisFilter {

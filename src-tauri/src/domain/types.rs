@@ -313,6 +313,118 @@ pub struct ImportDataOutput {
 }
 
 /* ═══════════════════════════════════════════════════════
+Daily pattern decision (MVP)
+═══════════════════════════════════════════════════════ */
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyPatternDecisionFilter {
+    pub game_day: Option<String>,
+    pub cost_class: Option<i64>,
+    pub main_stat_key: Option<String>,
+    pub status: Option<String>,
+    pub manual_start_index: Option<i64>,
+    pub manual_cycle_len: Option<i64>,
+    pub manual_guess_shapes: Option<Vec<String>>,
+    pub min_len: Option<i64>,
+    pub max_len: Option<i64>,
+    pub min_support: Option<i64>,
+    pub max_order: Option<i64>,
+    pub top_k: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyExactPatternRow {
+    pub length: i64,
+    pub pattern: Vec<String>,
+    pub display_pattern: Vec<String>,
+    pub shape: String,
+    pub support: i64,
+    pub window_count: i64,
+    pub expected_count: f64,
+    pub lift: f64,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyShapePatternRow {
+    pub length: i64,
+    pub shape: String,
+    pub support: i64,
+    pub expected_count: f64,
+    pub lift: f64,
+    pub score: f64,
+    pub example_patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdaptiveNextSuggestion {
+    pub stat_key: String,
+    pub display_name: String,
+    pub probability: f64,
+    pub base_probability: f64,
+    pub markov_probability: f64,
+    pub cycle_probability: f64,
+    pub motif_boost: f64,
+    pub matched_patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualGuessVerificationRow {
+    pub guess_shape: String,
+    pub length: i64,
+    pub support: i64,
+    pub opportunities: i64,
+    pub hit_rate: f64,
+    pub baseline_rate: f64,
+    pub lift: f64,
+    pub matched_cycle_indices: Vec<i64>,
+    pub next_stat_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualCycleSuggestion {
+    pub stat_key: String,
+    pub display_name: String,
+    pub count: i64,
+    pub probability: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualPatternSummary {
+    pub start_index: i64,
+    pub cycle_len: i64,
+    pub full_cycles: i64,
+    pub next_cycle_pos: i64,
+    pub top_cycle_shapes: Vec<(String, i64)>,
+    pub guesses: Vec<ManualGuessVerificationRow>,
+    pub position_suggestions: Vec<ManualCycleSuggestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyPatternDecisionReport {
+    pub game_day: String,
+    pub total_events: i64,
+    pub min_len: i64,
+    pub max_len: i64,
+    pub min_support: i64,
+    pub max_order: i64,
+    pub model_confidence: f64,
+    pub exact_patterns: Vec<DailyExactPatternRow>,
+    pub shape_patterns: Vec<DailyShapePatternRow>,
+    pub suggestions: Vec<AdaptiveNextSuggestion>,
+    pub manual_summary: Option<ManualPatternSummary>,
+    pub notes: Vec<String>,
+}
+
+/* ═══════════════════════════════════════════════════════
 Hypothesis verification types
 ═══════════════════════════════════════════════════════ */
 
