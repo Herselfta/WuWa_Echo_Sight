@@ -567,9 +567,12 @@ function DeviationChart({
       "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
       "#1abc9c", "#e67e22", "#34495e", "#e91e63", "#00bcd4",
     ];
+    const baselineColor = "#9ca3af";
+    const statColors = series.map((_, idx) => palette[idx % palette.length]);
 
     chart.setOption({
       animation: false,
+      color: [baselineColor, ...statColors],
       tooltip: {
         trigger: "axis",
         formatter: (params: unknown) => {
@@ -604,18 +607,25 @@ function DeviationChart({
           name: "基准线",
           type: "line",
           data: [[0, 0], [totalEvents - 1, 0]],
-          lineStyle: { color: "#aaa", type: "dashed", width: 1 },
+          color: baselineColor,
+          lineStyle: { color: baselineColor, type: "dashed", width: 1 },
+          itemStyle: { color: baselineColor },
           symbol: "none",
           emphasis: { disabled: true },
         },
-        ...series.map((s, idx) => ({
-          name: s.displayName,
-          type: "line" as const,
-          data: s.deviations.map((d, i) => [i, d] as [number, number]),
-          lineStyle: { color: palette[idx % palette.length], width: 2 },
-          symbol: "none",
-          smooth: false,
-        })),
+        ...series.map((s, idx) => {
+          const lineColor = statColors[idx];
+          return {
+            name: s.displayName,
+            type: "line" as const,
+            color: lineColor,
+            data: s.deviations.map((d, i) => [i, d] as [number, number]),
+            lineStyle: { color: lineColor, width: 2 },
+            itemStyle: { color: lineColor },
+            symbol: "none",
+            smooth: false,
+          };
+        }),
       ],
     });
 
