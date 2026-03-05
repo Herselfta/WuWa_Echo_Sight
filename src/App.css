@@ -1883,6 +1883,15 @@ button:hover {
   gap: 10px;
 }
 
+.record-analysis-page-frame {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: #f5f8fb;
+}
+
 .record-board-subsection {
   border: 1px solid var(--line);
   border-radius: 10px;

@@ -1725,8 +1725,10 @@ export function RecordPage() {
               决策页面
             </button>
           </nav>
-          {boardSurfaceTab === "analysis" ? (
-            <nav className="tab-nav" style={{ marginTop: 8 }}>
+          <div className="record-board-content">
+        {boardSurfaceTab === "analysis" ? (
+          <div className="record-analysis-page-frame">
+            <nav className="tab-nav">
               <button
                 type="button"
                 className={`tab-btn${analysisViewTab === "probability" ? " active" : ""}`}
@@ -1756,8 +1758,6 @@ export function RecordPage() {
                 均值回归
               </button>
             </nav>
-          ) : null}
-          <div className="record-board-content">
 
         {boardSurfaceTab === "analysis" && analysisViewTab === "probability" ? (
           <>
@@ -1886,6 +1886,19 @@ export function RecordPage() {
           </div>
         </div>
           </>
+        ) : null}
+
+        {boardSurfaceTab === "analysis" && activeHypothesisTab ? (
+          <div className="record-board-subsection">
+            <HypothesisVerification
+              embedded
+              forcedTab={activeHypothesisTab}
+              hideTabNav
+              refreshToken={analysisRefreshToken}
+            />
+          </div>
+        ) : null}
+          </div>
         ) : null}
 
         {boardSurfaceTab === "decision" ? (
@@ -2116,16 +2129,6 @@ export function RecordPage() {
         </div>
         ) : null}
 
-        {boardSurfaceTab === "analysis" && activeHypothesisTab ? (
-          <div className="record-board-subsection">
-            <HypothesisVerification
-              embedded
-              forcedTab={activeHypothesisTab}
-              hideTabNav
-              refreshToken={analysisRefreshToken}
-            />
-          </div>
-        ) : null}
           </div>
         </div>
       </div>
