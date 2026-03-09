@@ -49,22 +49,6 @@ fn list_enabled_stats(conn: &Connection) -> Result<Vec<(String, String)>, String
         .map_err(|e| format!("failed to collect stat_defs: {e}"))
 }
 
-fn load_day_sequence(conn: &Connection, game_day: &str) -> Result<Vec<String>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT stat_key
-             FROM ordered_events
-             WHERE game_day = ?1
-             ORDER BY analysis_seq ASC",
-        )
-        .map_err(|e| format!("failed to prepare day sequence query: {e}"))?;
-    let rows = stmt
-        .query_map([game_day], |row| row.get::<_, String>(0))
-        .map_err(|e| format!("failed to query day sequence: {e}"))?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("failed to collect day sequence: {e}"))
-}
-
 fn shape_signature(pattern: &[String]) -> String {
     let mut map: HashMap<&str, usize> = HashMap::new();
     let mut out = String::with_capacity(pattern.len());
@@ -1711,7 +1695,13 @@ fn build_state_context_expert(
     let (similarity_probs, similarity_active, similarity_signals) =
         build_day_similarity_context_probs(events, stat_keys, base_probs);
 
-    let (mut zone_weight, mut short_local_weight, mut short_category_weight, mut medium_category_weight, mut similarity_weight) =
+    let (
+        mut zone_weight,
+        mut short_local_weight,
+        mut short_category_weight,
+        mut medium_category_weight,
+        mut similarity_weight,
+    ): (f64, f64, f64, f64, f64) =
         match summary.regime_stage.as_str() {
             "new_regime" => (0.20, 0.40, 0.10, 0.10, 0.20),
             "transitioning" => (0.15, 0.32, 0.18, 0.15, 0.20),
