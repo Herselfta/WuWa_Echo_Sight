@@ -20,6 +20,7 @@ pub fn init_database(db_path: &Path) -> Result<(), String> {
     let migrations = [
         include_str!("migrations/001_init.sql"),
         include_str!("migrations/002_expectation_presets.sql"),
+        include_str!("migrations/003_pattern_learning.sql"),
     ];
 
     for (idx, migration_sql) in migrations.iter().enumerate() {
@@ -94,6 +95,16 @@ pub fn get_setting_f64(conn: &Connection, key: &str, default: f64) -> f64 {
     .ok()
     .and_then(|v| v.parse::<f64>().ok())
     .unwrap_or(default)
+}
+
+pub fn get_setting_string(conn: &Connection, key: &str, default: &str) -> String {
+    conn.query_row(
+        "SELECT value FROM app_settings WHERE key = ?1",
+        [key],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .unwrap_or_else(|| default.to_string())
 }
 
 pub fn get_tier_value(conn: &Connection, stat_key: &str, tier_index: i64) -> Result<i64, String> {

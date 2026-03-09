@@ -7,6 +7,9 @@ use crate::db::{
     compute_game_day, get_setting_i64, get_tier_value, now_rfc3339, open_connection,
     parse_event_time, AppState, DEFAULT_DAY_BOUNDARY_HOUR,
 };
+use crate::commands::decision::{
+    invalidate_unresolved_prediction_runs_for_game_day, resolve_prediction_run_after_append,
+};
 use crate::domain::types::{
     AppendOrderedEventInput, AppendOrderedEventOutput, DeleteOrderedEventInput,
     DeleteOrderedEventOutput, EditOrderedEventInput, EditOrderedEventOutput, EventHistoryFilter,
@@ -112,6 +115,13 @@ pub fn append_ordered_event(
         .map_err(|e| format!("failed to get analysis_seq: {e}"))?;
     let day_boundary = get_setting_i64(&tx, "day_boundary_hour", DEFAULT_DAY_BOUNDARY_HOUR);
     let game_day = compute_game_day(&input.event_time, day_boundary)?;
+    let pre_append_day_count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM ordered_events WHERE game_day = ?1",
+            [&game_day],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("failed to query pre-append day count: {e}"))?;
 
     let event_id = Uuid::new_v4().to_string();
     let now = now_rfc3339();
@@ -158,6 +168,27 @@ pub fn append_ordered_event(
     .map_err(|e| format!("failed to sync current_substats: {e}"))?;
 
     reorder_analysis_seq(&tx)?;
+    let latest_event_id: Option<String> = tx
+        .query_row(
+            "SELECT event_id
+             FROM ordered_events
+             WHERE game_day = ?1
+             ORDER BY event_time DESC, created_seq DESC, event_id DESC
+             LIMIT 1",
+            [&game_day],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("failed to query latest event after append: {e}"))?;
+    if latest_event_id.as_deref() == Some(event_id.as_str()) {
+        resolve_prediction_run_after_append(
+            &tx,
+            &game_day,
+            pre_append_day_count,
+            &event_id,
+            &input.stat_key,
+        )?;
+    }
 
     let opened_slots_count: i64 = tx
         .query_row(
@@ -230,6 +261,10 @@ pub fn edit_ordered_event(
     let prev_event_time = before["eventTime"]
         .as_str()
         .ok_or_else(|| "invalid stored eventTime".to_string())?
+        .to_string();
+    let prev_game_day = before["gameDay"]
+        .as_str()
+        .ok_or_else(|| "invalid stored gameDay".to_string())?
         .to_string();
 
     let slot_no = input.slot_no.unwrap_or(prev_slot_no);
@@ -312,6 +347,10 @@ pub fn edit_ordered_event(
     .map_err(|e| format!("failed to sync current_substats after edit: {e}"))?;
 
     let affected_range = reorder_analysis_seq(&tx)?;
+    invalidate_unresolved_prediction_runs_for_game_day(&tx, &prev_game_day)?;
+    if prev_game_day != game_day {
+        invalidate_unresolved_prediction_runs_for_game_day(&tx, &game_day)?;
+    }
 
     let opened_slots_count: i64 = tx
         .query_row(
@@ -463,11 +502,11 @@ pub fn delete_ordered_event(
         .map_err(|e| format!("failed to begin transaction: {e}"))?;
 
     // fetch the event to know its echo_id
-    let echo_id: String = tx
+    let (echo_id, game_day): (String, String) = tx
         .query_row(
-            "SELECT echo_id FROM ordered_events WHERE event_id = ?1",
+            "SELECT echo_id, game_day FROM ordered_events WHERE event_id = ?1",
             [&input.event_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(|e| format!("failed to query event: {e}"))?
@@ -503,6 +542,7 @@ pub fn delete_ordered_event(
 
     // reorder analysis_seq to keep it contiguous
     reorder_analysis_seq(&tx)?;
+    invalidate_unresolved_prediction_runs_for_game_day(&tx, &game_day)?;
 
     tx.commit()
         .map_err(|e| format!("failed to commit delete event: {e}"))?;

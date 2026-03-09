@@ -135,6 +135,7 @@ export interface AdaptiveNextSuggestion {
   probabilityCiLow: number;
   probabilityCiHigh: number;
   matchedPatterns: string[];
+  matchedExperts: string[];
 }
 
 export interface ManualGuessVerificationRow {
@@ -166,7 +167,29 @@ export interface ManualPatternSummary {
   positionSuggestions: ManualCycleSuggestion[];
 }
 
+export interface PatternBlendWeights {
+  source: string;
+  sampleDepthBucket: string;
+  markovHitBucket: string;
+  motifHitBucket: string;
+  base: number;
+  markov: number;
+  exactMotif: number;
+  approxShape: number;
+  autoCycle: number;
+  onlineAdjusted: boolean;
+}
+
+export interface PatternBacktestSummary {
+  sampleCount: number;
+  top1Accuracy: number;
+  top3Coverage: number;
+  meanTrueProb: number;
+  meanLogLoss: number;
+}
+
 export interface DailyPatternDecisionReport {
+  modelMode: string;
   gameDay: string;
   totalEvents: number;
   minLen: number;
@@ -174,6 +197,9 @@ export interface DailyPatternDecisionReport {
   minSupport: number;
   maxOrder: number;
   modelConfidence: number;
+  blendWeights: PatternBlendWeights;
+  backtestSummary: PatternBacktestSummary;
+  activeExperts: string[];
   exactPatterns: DailyExactPatternRow[];
   shapePatterns: DailyShapePatternRow[];
   suggestions: AdaptiveNextSuggestion[];

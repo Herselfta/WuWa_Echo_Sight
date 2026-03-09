@@ -1987,7 +1987,10 @@ export function RecordPage() {
           {patternDecision ? (
             <>
               <p className="hint" style={{ marginBottom: 8 }}>
-                置信度 {toPercent(patternDecision.modelConfidence)} · 模式长度 {patternDecision.minLen}-{patternDecision.maxLen} · 最小支持 {patternDecision.minSupport}
+                置信度 {toPercent(patternDecision.modelConfidence)} · 模型 {patternDecision.modelMode} · 模式长度 {patternDecision.minLen}-{patternDecision.maxLen} · 最小支持 {patternDecision.minSupport} · 回测 Top1 {toPercent(patternDecision.backtestSummary.top1Accuracy)} · Top3 {toPercent(patternDecision.backtestSummary.top3Coverage)} · LogLoss {patternDecision.backtestSummary.meanLogLoss.toFixed(3)}
+              </p>
+              <p className="hint" style={{ marginBottom: 8 }}>
+                权重 {patternDecision.blendWeights.source} · depth {patternDecision.blendWeights.sampleDepthBucket} / markov {patternDecision.blendWeights.markovHitBucket} / motif {patternDecision.blendWeights.motifHitBucket} · B {toPercent(patternDecision.blendWeights.base)} / M {toPercent(patternDecision.blendWeights.markov)} / X {toPercent(patternDecision.blendWeights.exactMotif)} / A {toPercent(patternDecision.blendWeights.approxShape)} / C {toPercent(patternDecision.blendWeights.autoCycle)}{patternDecision.blendWeights.onlineAdjusted ? " · online+" : ""}{patternDecision.activeExperts.length > 0 ? ` · 命中专家 ${patternDecision.activeExperts.join(", ")}` : ""}
               </p>
               <div className="record-dist-table-wrap">
                 <table className="table compact-table">
@@ -2018,7 +2021,7 @@ export function RecordPage() {
                         </td>
                         <td>{s.motifBoost.toFixed(2)}</td>
                         <td style={{ fontSize: 11, textAlign: "left" }}>
-                          {s.matchedPatterns.length > 0 ? s.matchedPatterns.join(" | ") : "—"}
+                          {s.matchedPatterns.length > 0 ? s.matchedPatterns.join(" | ") : "—"}{s.matchedExperts.length > 0 ? ` [${s.matchedExperts.join(", ")}]` : ""}
                         </td>
                       </tr>
                     ))}

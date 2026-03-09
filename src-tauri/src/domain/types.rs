@@ -342,6 +342,7 @@ pub struct AdaptiveNextSuggestion {
     pub probability_ci_low: f64,
     pub probability_ci_high: f64,
     pub matched_patterns: Vec<String>,
+    pub matched_experts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -381,7 +382,33 @@ pub struct ManualPatternSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PatternBlendWeights {
+    pub source: String,
+    pub sample_depth_bucket: String,
+    pub markov_hit_bucket: String,
+    pub motif_hit_bucket: String,
+    pub base: f64,
+    pub markov: f64,
+    pub exact_motif: f64,
+    pub approx_shape: f64,
+    pub auto_cycle: f64,
+    pub online_adjusted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatternBacktestSummary {
+    pub sample_count: i64,
+    pub top1_accuracy: f64,
+    pub top3_coverage: f64,
+    pub mean_true_prob: f64,
+    pub mean_log_loss: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DailyPatternDecisionReport {
+    pub model_mode: String,
     pub game_day: String,
     pub total_events: i64,
     pub min_len: i64,
@@ -389,6 +416,9 @@ pub struct DailyPatternDecisionReport {
     pub min_support: i64,
     pub max_order: i64,
     pub model_confidence: f64,
+    pub blend_weights: PatternBlendWeights,
+    pub backtest_summary: PatternBacktestSummary,
+    pub active_experts: Vec<String>,
     pub exact_patterns: Vec<DailyExactPatternRow>,
     pub shape_patterns: Vec<DailyShapePatternRow>,
     pub suggestions: Vec<AdaptiveNextSuggestion>,

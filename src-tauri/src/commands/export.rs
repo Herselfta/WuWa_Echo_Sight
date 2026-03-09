@@ -240,6 +240,7 @@ fn insert_rows_from_zip(
         "echo_current_substats.csv",
         "events.csv",
         "event_edit_logs.csv",
+        "pattern_prediction_runs.csv",
         "probability_snapshots.csv",
         "expectation_presets.csv",
         "expectation_preset_items.csv",
@@ -259,6 +260,7 @@ fn insert_rows_from_zip(
 
     tx.execute_batch(
         "DELETE FROM event_edit_logs;
+         DELETE FROM pattern_prediction_runs;
          DELETE FROM ordered_events;
          DELETE FROM echo_current_substats;
          DELETE FROM echo_expectations;
@@ -398,6 +400,37 @@ fn insert_rows_from_zip(
         imported_tables.push("event_edit_logs".to_string());
     }
 
+    if let Some(rows) = data.get("pattern_prediction_runs.csv") {
+        for row in rows {
+            tx.execute(
+                "INSERT INTO pattern_prediction_runs(
+                    run_id, context_hash, game_day, seq_len, mode, weights_json,
+                    predictions_json, context_json, actual_stat_key, actual_event_id,
+                    top1_hit, top3_hit, log_loss, resolved_at, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                rusqlite::params![
+                    get_required(row, "run_id", "pattern_prediction_runs.csv")?,
+                    get_required(row, "context_hash", "pattern_prediction_runs.csv")?,
+                    get_required(row, "game_day", "pattern_prediction_runs.csv")?,
+                    parse_i64(get_required(row, "seq_len", "pattern_prediction_runs.csv")?, "seq_len", "pattern_prediction_runs.csv")?,
+                    get_required(row, "mode", "pattern_prediction_runs.csv")?,
+                    get_required(row, "weights_json", "pattern_prediction_runs.csv")?,
+                    get_required(row, "predictions_json", "pattern_prediction_runs.csv")?,
+                    get_required(row, "context_json", "pattern_prediction_runs.csv")?,
+                    row.get("actual_stat_key").cloned().filter(|s| !s.is_empty()),
+                    row.get("actual_event_id").cloned().filter(|s| !s.is_empty()),
+                    row.get("top1_hit").map(|v| parse_i64(v, "top1_hit", "pattern_prediction_runs.csv")).transpose()?,
+                    row.get("top3_hit").map(|v| parse_i64(v, "top3_hit", "pattern_prediction_runs.csv")).transpose()?,
+                    row.get("log_loss").and_then(|v| if v.is_empty() { None } else { v.parse::<f64>().ok() }),
+                    row.get("resolved_at").cloned().filter(|s| !s.is_empty()),
+                    get_required(row, "created_at", "pattern_prediction_runs.csv")?,
+                ],
+            )
+            .map_err(|e| format!("failed to import pattern_prediction_runs row: {e}"))?;
+        }
+        imported_tables.push("pattern_prediction_runs".to_string());
+    }
+
     if let Some(rows) = data.get("probability_snapshots.csv") {
         for row in rows {
             tx.execute(
@@ -495,6 +528,7 @@ pub fn export_csv(
     let files = vec![
         ("events.csv", "ordered_events"),
         ("event_edit_logs.csv", "event_edit_logs"),
+        ("pattern_prediction_runs.csv", "pattern_prediction_runs"),
         ("echoes.csv", "echoes"),
         ("echo_current_substats.csv", "echo_current_substats"),
         ("echo_expectations.csv", "echo_expectations"),
