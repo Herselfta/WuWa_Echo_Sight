@@ -198,6 +198,550 @@ struct ShapeAggregate {
     examples: Vec<(String, i64, f64)>,
 }
 
+#[derive(Clone)]
+struct ComponentProbabilitySet {
+    base_probs: HashMap<String, f64>,
+    markov_probs: HashMap<String, f64>,
+    motif_probs: HashMap<String, f64>,
+    markov_active: bool,
+    motif_active: bool,
+}
+
+#[derive(Clone, Copy)]
+struct AdaptiveBlendSummary {
+    base_weight: f64,
+    markov_weight: f64,
+    motif_weight: f64,
+    sample_count: usize,
+    top1_accuracy: f64,
+    avg_true_prob: f64,
+}
+
+#[derive(Clone, Copy)]
+struct BacktestConfig {
+    analysis_window: usize,
+    min_len: usize,
+    max_len: usize,
+    min_support: i64,
+    max_order: usize,
+    alpha: f64,
+    motif_lambda: f64,
+}
+
+struct ReducedExactPattern {
+    length: i64,
+    pattern: Vec<String>,
+    support: i64,
+    window_count: i64,
+    lift: f64,
+}
+
+struct ReducedShapePattern {
+    length: i64,
+    shape: String,
+    support: i64,
+    lift: f64,
+}
+
+fn normalize_probability_map(map: &mut HashMap<String, f64>) {
+    let total = map.values().sum::<f64>();
+    if total > 1e-12 {
+        for value in map.values_mut() {
+            *value /= total;
+        }
+    } else if !map.is_empty() {
+        let uniform = 1.0 / map.len() as f64;
+        for value in map.values_mut() {
+            *value = uniform;
+        }
+    }
+}
+
+fn build_motif_probs_from_raw_boosts(
+    stat_keys: &[String],
+    base_probs: &HashMap<String, f64>,
+    raw_boost_map: &HashMap<String, f64>,
+    motif_lambda: f64,
+) -> HashMap<String, f64> {
+    let max_boost = raw_boost_map.values().copied().fold(0.0, f64::max);
+    if max_boost <= 1e-9 {
+        return base_probs.clone();
+    }
+
+    let mut motif_probs = HashMap::new();
+    for stat_key in stat_keys {
+        let base = *base_probs.get(stat_key).unwrap_or(&0.0);
+        let raw_boost = *raw_boost_map.get(stat_key).unwrap_or(&0.0);
+        let norm_boost = if max_boost > 1e-9 {
+            raw_boost / max_boost
+        } else {
+            0.0
+        };
+        motif_probs.insert(stat_key.clone(), base * (1.0 + motif_lambda * norm_boost));
+    }
+    normalize_probability_map(&mut motif_probs);
+    motif_probs
+}
+
+fn resolve_active_blend_weights(
+    blend: &AdaptiveBlendSummary,
+    markov_active: bool,
+    motif_active: bool,
+) -> (f64, f64, f64) {
+    let base_weight = blend.base_weight.max(0.0);
+    let markov_weight = if markov_active {
+        blend.markov_weight.max(0.0)
+    } else {
+        0.0
+    };
+    let motif_weight = if motif_active {
+        blend.motif_weight.max(0.0)
+    } else {
+        0.0
+    };
+    let total = base_weight + markov_weight + motif_weight;
+    if total <= 1e-9 {
+        return (1.0, 0.0, 0.0);
+    }
+    (
+        base_weight / total,
+        markov_weight / total,
+        motif_weight / total,
+    )
+}
+
+fn blend_component_probs(
+    stat_keys: &[String],
+    components: &ComponentProbabilitySet,
+    blend: &AdaptiveBlendSummary,
+) -> HashMap<String, f64> {
+    let (base_weight, markov_weight, motif_weight) =
+        resolve_active_blend_weights(blend, components.markov_active, components.motif_active);
+    let mut mixed = HashMap::new();
+    for stat_key in stat_keys {
+        let base = *components.base_probs.get(stat_key).unwrap_or(&0.0);
+        let markov = *components.markov_probs.get(stat_key).unwrap_or(&base);
+        let motif = *components.motif_probs.get(stat_key).unwrap_or(&base);
+        mixed.insert(
+            stat_key.clone(),
+            base_weight * base + markov_weight * markov + motif_weight * motif,
+        );
+    }
+    normalize_probability_map(&mut mixed);
+    mixed
+}
+
+fn top_prediction_key<'a>(map: &'a HashMap<String, f64>) -> Option<&'a str> {
+    map.iter()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(Ordering::Equal))
+        .map(|(k, _)| k.as_str())
+}
+
+fn default_adaptive_blend(baseline_blend: f64) -> AdaptiveBlendSummary {
+    let mut base_weight = (1.0 - baseline_blend * 0.72).clamp(0.30, 0.58);
+    let mut markov_weight = (baseline_blend * 0.52).clamp(0.20, 0.40);
+    let mut motif_weight = 0.18;
+    let total = base_weight + markov_weight + motif_weight;
+    base_weight /= total;
+    markov_weight /= total;
+    motif_weight /= total;
+    AdaptiveBlendSummary {
+        base_weight,
+        markov_weight,
+        motif_weight,
+        sample_count: 0,
+        top1_accuracy: 0.0,
+        avg_true_prob: 0.0,
+    }
+}
+
+fn load_recent_global_sequence(conn: &Connection, limit: usize) -> Result<Vec<String>, String> {
+    let limit = limit.max(1) as i64;
+    let mut stmt = conn
+        .prepare(
+            "SELECT stat_key
+             FROM (
+               SELECT stat_key, game_day, analysis_seq, created_seq
+               FROM ordered_events
+               ORDER BY game_day DESC, analysis_seq DESC, created_seq DESC
+               LIMIT ?1
+             )
+             ORDER BY game_day ASC, analysis_seq ASC, created_seq ASC",
+        )
+        .map_err(|e| format!("failed to prepare recent global sequence query: {e}"))?;
+    let rows = stmt
+        .query_map([limit], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("failed to query recent global sequence: {e}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("failed to collect recent global sequence: {e}"))
+}
+
+fn build_component_probabilities(
+    seq: &[String],
+    stat_keys: &[String],
+    config: &BacktestConfig,
+) -> ComponentProbabilitySet {
+    let mut base_counts: HashMap<String, i64> = HashMap::new();
+    for stat_key in seq {
+        *base_counts.entry(stat_key.clone()).or_insert(0) += 1;
+    }
+
+    let n = seq.len();
+    let k = stat_keys.len().max(1) as f64;
+    let denom = n as f64 + config.alpha * k;
+    let base_probs: HashMap<String, f64> = stat_keys
+        .iter()
+        .map(|stat_key| {
+            let count = *base_counts.get(stat_key).unwrap_or(&0) as f64;
+            (stat_key.clone(), (count + config.alpha) / denom)
+        })
+        .collect();
+
+    let effective_max_order = if n >= 2 {
+        config.max_order.min(n - 1)
+    } else {
+        1
+    };
+    let mut markov_models: Vec<HashMap<Vec<String>, HashMap<String, i64>>> = Vec::new();
+    for order in 1..=effective_max_order {
+        let mut model: HashMap<Vec<String>, HashMap<String, i64>> = HashMap::new();
+        if n > order {
+            for i in order..n {
+                let context = seq[i - order..i].to_vec();
+                let next = seq[i].clone();
+                *model.entry(context).or_default().entry(next).or_insert(0) += 1;
+            }
+        }
+        markov_models.push(model);
+    }
+
+    let mut markov_acc: HashMap<String, f64> =
+        stat_keys.iter().map(|s| (s.clone(), 0.0)).collect();
+    let mut markov_weight_total = 0.0;
+    for order in 1..=effective_max_order {
+        if n < order {
+            continue;
+        }
+        let context = seq[n - order..n].to_vec();
+        if let Some(next_counts) = markov_models[order - 1].get(&context) {
+            let total: i64 = next_counts.values().sum();
+            if total <= 0 {
+                continue;
+            }
+            let confidence = total as f64 / (total as f64 + 3.0 * order as f64);
+            let weight = confidence * (order as f64).powf(1.35);
+            if weight <= 0.0 {
+                continue;
+            }
+            for stat_key in stat_keys {
+                let count = *next_counts.get(stat_key).unwrap_or(&0) as f64;
+                let p = (count + config.alpha) / (total as f64 + config.alpha * k);
+                if let Some(acc) = markov_acc.get_mut(stat_key) {
+                    *acc += weight * p;
+                }
+            }
+            markov_weight_total += weight;
+        }
+    }
+    let markov_probs: HashMap<String, f64> = stat_keys
+        .iter()
+        .map(|stat_key| {
+            let p = if markov_weight_total > 0.0 {
+                markov_acc.get(stat_key).copied().unwrap_or(0.0) / markov_weight_total
+            } else {
+                *base_probs.get(stat_key).unwrap_or(&0.0)
+            };
+            (stat_key.clone(), p)
+        })
+        .collect();
+
+    let marginals: HashMap<String, f64> = stat_keys
+        .iter()
+        .map(|stat_key| {
+            (
+                stat_key.clone(),
+                (*base_counts.get(stat_key).unwrap_or(&0) as f64) / n.max(1) as f64,
+            )
+        })
+        .collect();
+
+    let mut exact_patterns_all = Vec::<ReducedExactPattern>::new();
+    let mut shape_map: HashMap<(i64, String), (i64, f64)> = HashMap::new();
+    for len in 2..=config.max_len.max(2) {
+        if len > n {
+            continue;
+        }
+        let windows = (n - len + 1) as i64;
+        let mut counts: HashMap<Vec<String>, i64> = HashMap::new();
+        for i in 0..=n - len {
+            let pattern = seq[i..i + len].to_vec();
+            *counts.entry(pattern).or_insert(0) += 1;
+        }
+
+        for (pattern, support) in counts {
+            if len < config.min_len || support < config.min_support {
+                continue;
+            }
+
+            let expected_prob = pattern
+                .iter()
+                .map(|stat_key| *marginals.get(stat_key).unwrap_or(&0.0))
+                .product::<f64>();
+            let expected_count = expected_prob * windows as f64;
+            let lift = if expected_count > 1e-9 {
+                support as f64 / expected_count
+            } else {
+                0.0
+            };
+            let shape = shape_signature(&pattern);
+
+            exact_patterns_all.push(ReducedExactPattern {
+                length: len as i64,
+                pattern,
+                support,
+                window_count: windows,
+                lift,
+            });
+
+            let entry = shape_map.entry((len as i64, shape)).or_insert((0, 0.0));
+            entry.0 += support;
+            entry.1 += expected_count;
+        }
+    }
+
+    let shape_patterns_all = shape_map
+        .into_iter()
+        .map(|((length, shape), (support, expected_count))| ReducedShapePattern {
+            length,
+            shape,
+            support,
+            lift: if expected_count > 1e-9 {
+                support as f64 / expected_count
+            } else {
+                0.0
+            },
+        })
+        .collect::<Vec<_>>();
+
+    let mut matched_exact = Vec::<(String, f64, i64)>::new();
+    for row in &exact_patterns_all {
+        if row.length < 3 {
+            continue;
+        }
+        let prefix = &row.pattern[..row.pattern.len() - 1];
+        if !ends_with_pattern(seq, prefix) {
+            continue;
+        }
+        let Some(next_stat) = row.pattern.last().cloned() else {
+            continue;
+        };
+        let lift_gain = (row.lift - 1.0).max(0.0);
+        if lift_gain <= 0.0 {
+            continue;
+        }
+        let density = row.support as f64 / row.window_count.max(1) as f64;
+        let short_penalty = if row.length <= 3 { 0.55 } else { 1.0 };
+        let boost = lift_gain
+            * (row.length as f64).powf(1.6)
+            * (row.support as f64).ln_1p()
+            * density.sqrt()
+            * short_penalty;
+        if boost > 0.0 {
+            matched_exact.push((next_stat, boost, row.length));
+        }
+    }
+
+    let mut matched_shape = Vec::<(String, f64, i64)>::new();
+    for row in &shape_patterns_all {
+        if row.length < 4 {
+            continue;
+        }
+        let prefix_len = (row.length - 1) as usize;
+        if prefix_len == 0 || prefix_len > seq.len() {
+            continue;
+        }
+        let suffix = &seq[seq.len() - prefix_len..];
+        let Some(next_stat) = infer_next_stat_from_shape(&row.shape, suffix) else {
+            continue;
+        };
+        let lift_gain = (row.lift - 1.0).max(0.0);
+        if lift_gain <= 0.0 {
+            continue;
+        }
+        let boost = lift_gain * (row.support as f64).ln_1p() * (row.length as f64).powf(1.7);
+        if boost > 0.0 {
+            matched_shape.push((next_stat, boost, row.length));
+        }
+    }
+
+    let all_contribs = matched_exact
+        .into_iter()
+        .chain(matched_shape.into_iter())
+        .collect::<Vec<_>>();
+    let longest_match_len = all_contribs
+        .iter()
+        .map(|(_, _, len)| *len)
+        .max()
+        .unwrap_or(0) as f64;
+
+    let mut raw_boost_map: HashMap<String, f64> =
+        stat_keys.iter().map(|s| (s.clone(), 0.0)).collect();
+    for (stat_key, boost, len) in all_contribs {
+        let len_factor = if longest_match_len > 0.0 {
+            (len as f64 / longest_match_len).powf(2.2)
+        } else {
+            1.0
+        };
+        let adjusted = boost * len_factor;
+        if adjusted <= 0.0 {
+            continue;
+        }
+        if let Some(value) = raw_boost_map.get_mut(&stat_key) {
+            *value += adjusted;
+        }
+    }
+
+    let motif_active = raw_boost_map.values().copied().fold(0.0, f64::max) > 1e-9;
+    let motif_probs =
+        build_motif_probs_from_raw_boosts(stat_keys, &base_probs, &raw_boost_map, config.motif_lambda);
+
+    ComponentProbabilitySet {
+        base_probs,
+        markov_probs,
+        motif_probs,
+        markov_active: markov_weight_total > 0.0,
+        motif_active,
+    }
+}
+
+fn fit_backtested_blend(
+    conn: &Connection,
+    stat_keys: &[String],
+    config: &BacktestConfig,
+    baseline_blend: f64,
+) -> Result<AdaptiveBlendSummary, String> {
+    let default_blend = default_adaptive_blend(baseline_blend);
+    if stat_keys.is_empty() {
+        return Ok(default_blend);
+    }
+
+    let backtest_samples = get_setting_i64(conn, "pattern_backtest_samples", 72).clamp(24, 160)
+        as usize;
+    let history_limit = (config.analysis_window + backtest_samples + 1).max(48);
+    let history = load_recent_global_sequence(conn, history_limit)?;
+    let warmup = config.min_len.max(6).max(config.max_order + 1);
+    if history.len() <= warmup + 1 {
+        return Ok(default_blend);
+    }
+
+    let last_idx = history.len() - 1;
+    let start = warmup.max(last_idx.saturating_sub(backtest_samples));
+    let mut samples = Vec::<(ComponentProbabilitySet, String, f64)>::new();
+    for idx in start..last_idx {
+        let prefix_start = (idx + 1).saturating_sub(config.analysis_window);
+        let prefix = &history[prefix_start..=idx];
+        if prefix.len() < warmup {
+            continue;
+        }
+        let age = (last_idx - idx - 1) as f64;
+        let sample_weight = 0.985_f64.powf(age);
+        let components = build_component_probabilities(prefix, stat_keys, config);
+        let actual = history[idx + 1].clone();
+        samples.push((components, actual, sample_weight));
+    }
+
+    if samples.len() < 12 {
+        return Ok(default_blend);
+    }
+
+    let prior = [
+        default_blend.base_weight,
+        default_blend.markov_weight,
+        default_blend.motif_weight,
+    ];
+    let mut log_scores = [0.0; 3];
+    let mut weighted_total = 0.0;
+    for (components, actual, sample_weight) in &samples {
+        let expert_maps = [
+            &components.base_probs,
+            &components.markov_probs,
+            &components.motif_probs,
+        ];
+        for (idx, expert_map) in expert_maps.iter().enumerate() {
+            let p = expert_map
+                .get(actual)
+                .copied()
+                .unwrap_or(1e-9)
+                .clamp(1e-9, 1.0);
+            log_scores[idx] += sample_weight * p.ln();
+        }
+        weighted_total += sample_weight;
+    }
+
+    if weighted_total <= 1e-9 {
+        return Ok(default_blend);
+    }
+
+    let mean_log_scores = [
+        log_scores[0] / weighted_total,
+        log_scores[1] / weighted_total,
+        log_scores[2] / weighted_total,
+    ];
+    let best_score = mean_log_scores
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    let temperature = 0.35;
+    let mut raw_weights = [0.0; 3];
+    for idx in 0..3 {
+        raw_weights[idx] = prior[idx] * ((mean_log_scores[idx] - best_score) / temperature).exp();
+    }
+    let raw_total = raw_weights.iter().sum::<f64>().max(1e-9);
+    let learned = [
+        raw_weights[0] / raw_total,
+        raw_weights[1] / raw_total,
+        raw_weights[2] / raw_total,
+    ];
+    let mut final_weights = [
+        prior[0] * 0.30 + learned[0] * 0.70,
+        prior[1] * 0.30 + learned[1] * 0.70,
+        prior[2] * 0.30 + learned[2] * 0.70,
+    ];
+    let final_total = final_weights.iter().sum::<f64>().max(1e-9);
+    for weight in &mut final_weights {
+        *weight /= final_total;
+    }
+
+    let learned_blend = AdaptiveBlendSummary {
+        base_weight: final_weights[0],
+        markov_weight: final_weights[1],
+        motif_weight: final_weights[2],
+        sample_count: samples.len(),
+        top1_accuracy: 0.0,
+        avg_true_prob: 0.0,
+    };
+
+    let mut mix_hits = 0.0;
+    let mut mix_true_prob = 0.0;
+    for (components, actual, sample_weight) in &samples {
+        let mixed = blend_component_probs(stat_keys, components, &learned_blend);
+        let p = mixed.get(actual).copied().unwrap_or(0.0);
+        mix_true_prob += sample_weight * p;
+        if top_prediction_key(&mixed) == Some(actual.as_str()) {
+            mix_hits += sample_weight;
+        }
+    }
+
+    Ok(AdaptiveBlendSummary {
+        base_weight: learned_blend.base_weight,
+        markov_weight: learned_blend.markov_weight,
+        motif_weight: learned_blend.motif_weight,
+        sample_count: learned_blend.sample_count,
+        top1_accuracy: (mix_hits / weighted_total).clamp(0.0, 1.0),
+        avg_true_prob: (mix_true_prob / weighted_total).clamp(0.0, 1.0),
+    })
+}
+
 pub fn get_daily_pattern_decision_internal(
     conn: &Connection,
     filter: &DailyPatternDecisionFilter,
@@ -208,6 +752,7 @@ pub fn get_daily_pattern_decision_internal(
     let baseline_blend = get_setting_f64(conn, "baseline_blend", 0.65).clamp(0.05, 0.95);
     let alpha = get_setting_f64(conn, "smoothing_alpha", 1.0).max(1e-9);
     let confidence_level = get_setting_f64(conn, "confidence_level", 0.95).clamp(0.5, 0.999);
+    let motif_lambda = 1.15f64;
     let mut notes = vec!["当前模型按全局序列建模，不区分 Cost/主词条/状态。".to_string()];
 
     let min_len = filter.min_len.unwrap_or(3).clamp(2, 12) as usize;
@@ -234,6 +779,29 @@ pub fn get_daily_pattern_decision_internal(
     let enabled_stats = list_enabled_stats(&conn)?;
     let stat_keys: Vec<String> = enabled_stats.iter().map(|(k, _)| k.clone()).collect();
     let display_map: HashMap<String, String> = enabled_stats.into_iter().collect();
+    let backtest_config = BacktestConfig {
+        analysis_window,
+        min_len,
+        max_len,
+        min_support,
+        max_order,
+        alpha,
+        motif_lambda,
+    };
+    let adaptive_blend = fit_backtested_blend(conn, &stat_keys, &backtest_config, baseline_blend)?;
+    if adaptive_blend.sample_count > 0 {
+        notes.push(format!(
+            "回测调权: base={:.0}% / markov={:.0}% / motif={:.0}% · samples={} · top1={:.1}% · meanP={:.1}%",
+            adaptive_blend.base_weight * 100.0,
+            adaptive_blend.markov_weight * 100.0,
+            adaptive_blend.motif_weight * 100.0,
+            adaptive_blend.sample_count,
+            adaptive_blend.top1_accuracy * 100.0,
+            adaptive_blend.avg_true_prob * 100.0,
+        ));
+    } else {
+        notes.push("历史样本不足，当前使用默认融合权重。".to_string());
+    }
 
     let game_day = resolve_game_day(&conn, &filter)?;
     if game_day.is_empty() {
@@ -527,11 +1095,6 @@ pub fn get_daily_pattern_decision_internal(
             (key.clone(), p)
         })
         .collect();
-    let markov_blend = if baseline_blend <= 0.0 {
-        0.0
-    } else {
-        (markov_weight_total / (markov_weight_total + 2.0)).min(baseline_blend)
-    };
 
     let mut cycle_probs: HashMap<String, f64> =
         stat_keys.iter().map(|s| (s.clone(), 0.0)).collect();
@@ -829,7 +1392,10 @@ pub fn get_daily_pattern_decision_internal(
     }
 
     let max_boost = raw_boost_map.values().copied().fold(0.0, f64::max);
-    let motif_lambda = 1.15f64;
+    let motif_probs =
+        build_motif_probs_from_raw_boosts(&stat_keys, &base_probs, &raw_boost_map, motif_lambda);
+    let (base_mix_weight, markov_mix_weight, motif_mix_weight) =
+        resolve_active_blend_weights(&adaptive_blend, markov_weight_total > 0.0, max_boost > 1e-9);
 
     let mut suggestions = Vec::<AdaptiveNextSuggestion>::new();
     let mut total_score = 0.0;
@@ -837,14 +1403,12 @@ pub fn get_daily_pattern_decision_internal(
     for stat_key in &stat_keys {
         let base = *base_probs.get(stat_key).unwrap_or(&0.0);
         let markov = *markov_probs.get(stat_key).unwrap_or(&base);
+        let motif = *motif_probs.get(stat_key).unwrap_or(&base);
         let cycle = if cycle_weight > 0.0 {
             *cycle_probs.get(stat_key).unwrap_or(&base)
         } else {
             base
         };
-
-        let pre_markov = (1.0 - markov_blend) * base + markov_blend * markov;
-        let pre = (1.0 - cycle_weight) * pre_markov + cycle_weight * cycle;
 
         let raw_boost = *raw_boost_map.get(stat_key).unwrap_or(&0.0);
         let norm_boost = if max_boost > 1e-9 {
@@ -852,7 +1416,9 @@ pub fn get_daily_pattern_decision_internal(
         } else {
             0.0
         };
-        let score = pre * (1.0 + motif_lambda * norm_boost);
+        let adaptive_mix =
+            base_mix_weight * base + markov_mix_weight * markov + motif_mix_weight * motif;
+        let score = (1.0 - cycle_weight) * adaptive_mix + cycle_weight * cycle;
         total_score += score;
         let pseudo_success = ((score * interval_total as f64).round())
             .clamp(0.0, interval_total as f64) as i64;
@@ -898,19 +1464,27 @@ pub fn get_daily_pattern_decision_internal(
     suggestions.truncate(top_k);
 
     let sample_conf = (n as f64 / (n as f64 + 20.0)).min(1.0);
-    let markov_conf = if baseline_blend > 0.0 {
-        (markov_blend / baseline_blend).min(1.0)
+    let markov_conf = if markov_weight_total > 0.0 {
+        markov_mix_weight.clamp(0.0, 1.0)
     } else {
         0.0
     };
     let cycle_conf = (cycle_weight / 0.45).min(1.0);
     let motif_conf = if max_boost > 0.0 {
-        1.0 - 1.0 / (1.0 + max_boost)
+        (motif_mix_weight * (1.0 - 1.0 / (1.0 + max_boost))).clamp(0.0, 1.0)
     } else {
         0.0
     };
-    let model_confidence =
-        (0.35 * sample_conf + 0.25 * markov_conf + 0.20 * cycle_conf + 0.20 * motif_conf).min(1.0);
+    let backtest_sample_conf =
+        adaptive_blend.sample_count as f64 / (adaptive_blend.sample_count as f64 + 24.0);
+    let backtest_conf =
+        (adaptive_blend.top1_accuracy * 1.6 * backtest_sample_conf).clamp(0.0, 1.0);
+    let model_confidence = (0.25 * sample_conf
+        + 0.20 * markov_conf
+        + 0.15 * cycle_conf
+        + 0.15 * motif_conf
+        + 0.25 * backtest_conf)
+        .min(1.0);
 
     if n < 20 {
         notes.push("当日样本较少，系统会自动回退到基础概率。".to_string());

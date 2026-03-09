@@ -79,6 +79,10 @@ function parseGuessShapes(raw: string): string[] {
 }
 
 const GAME_DAY_BOUNDARY_HOUR = 4;
+const DEFAULT_PATTERN_MANUAL_START_STR = "0";
+const DEFAULT_PATTERN_MANUAL_CYCLE_STR = "5";
+const DEFAULT_PATTERN_AUTO_MIN_LEN_STR = "3";
+const DEFAULT_PATTERN_MANUAL_GUESS_STR = "AABCB, ABA";
 
 function formatLocalGameDay(date: Date): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -252,11 +256,10 @@ export function RecordPage() {
   const [distributionFilter, setDistributionFilter] = useState<DistributionFilter>({});
   const [distribution, setDistribution] = useState<DistributionPayload | null>(null);
   const [patternDecision, setPatternDecision] = useState<DailyPatternDecisionReport | null>(null);
-  const [patternManualStartStr, setPatternManualStartStr] = useState("0");
-  const [patternManualCycleStr, setPatternManualCycleStr] = useState("5");
-  const [patternManualGuessStr, setPatternManualGuessStr] = useState("AABCB, ABA");
-  const [patternAutoMinLenStr, setPatternAutoMinLenStr] = useState("3");
-  const [patternConfigVersion, setPatternConfigVersion] = useState(0);
+  const [patternManualStartStr, setPatternManualStartStr] = useState(DEFAULT_PATTERN_MANUAL_START_STR);
+  const [patternManualCycleStr, setPatternManualCycleStr] = useState(DEFAULT_PATTERN_MANUAL_CYCLE_STR);
+  const [patternManualGuessStr, setPatternManualGuessStr] = useState(DEFAULT_PATTERN_MANUAL_GUESS_STR);
+  const [patternAutoMinLenStr, setPatternAutoMinLenStr] = useState(DEFAULT_PATTERN_AUTO_MIN_LEN_STR);
 
   /* === misc === */
   const [saving, setSaving] = useState(false);
@@ -494,23 +497,28 @@ export function RecordPage() {
     } finally { setLoadingDist(false); }
   };
 
-  const loadPatternDecision = async () => {
+  const loadPatternDecision = async (options?: { includeManual?: boolean }) => {
     setLoadingPatternDecision(true);
     try {
-      const manualStartIndex = Math.max(0, Number(patternManualStartStr) || 0);
-      const manualCycleLen = Math.max(2, Number(patternManualCycleStr) || 5);
       const autoMinLen = Math.max(2, Number(patternAutoMinLenStr) || 3);
-      const manualGuessShapes = parseGuessShapes(patternManualGuessStr);
-      const report = await getDailyPatternDecision({
-        manualStartIndex,
-        manualCycleLen,
-        manualGuessShapes,
+      const filter = {
         minLen: autoMinLen,
-        maxLen: Math.max(autoMinLen, manualCycleLen + 1),
         minSupport: 2,
         maxOrder: 5,
         topK: 10,
-      });
+        ...(options?.includeManual
+          ? {
+              manualStartIndex: Math.max(0, Number(patternManualStartStr) || 0),
+              manualCycleLen: Math.max(2, Number(patternManualCycleStr) || 5),
+              manualGuessShapes: parseGuessShapes(patternManualGuessStr),
+              maxLen: Math.max(
+                autoMinLen,
+                Math.max(2, Number(patternManualCycleStr) || 5) + 1,
+              ),
+            }
+          : {}),
+      };
+      const report = await getDailyPatternDecision(filter);
       setPatternDecision(report);
     } catch (error) {
       setPatternDecision(null);
@@ -520,9 +528,13 @@ export function RecordPage() {
     }
   };
 
+  const resetPatternConfig = () => {
+    void loadPatternDecision({ includeManual: false });
+  };
+
   // mount fetching
   useEffect(() => { void loadDistribution(); }, []);
-  useEffect(() => { void loadPatternDecision(); }, [patternConfigVersion]);
+  useEffect(() => { void loadPatternDecision({ includeManual: false }); }, []);
   // history fetching
   useEffect(() => { void loadHistory(); }, []);
 
@@ -1908,7 +1920,7 @@ export function RecordPage() {
               {loadingPatternDecision ? " · 更新中..." : ""}
             </span>
           </div>
-          <div className="inline-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+          <div className="inline-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
             <label style={{ fontSize: 12 }}>
               起点
               <input
@@ -1950,9 +1962,24 @@ export function RecordPage() {
                 style={{ width: 240, marginLeft: 4 }}
               />
             </label>
-            <button type="button" onClick={() => setPatternConfigVersion((v) => v + 1)} disabled={loadingPatternDecision}>
-              应用手动分析
-            </button>
+            <div className="inline-row" style={{ gap: 8, alignSelf: "flex-end", flexWrap: "nowrap" }}>
+              <button
+                type="button"
+                onClick={() => void loadPatternDecision({ includeManual: true })}
+                disabled={loadingPatternDecision}
+              >
+                应用手动分析
+              </button>
+              <button
+                type="button"
+                onClick={resetPatternConfig}
+                disabled={loadingPatternDecision}
+                aria-label="取消应用"
+                title="取消应用"
+              >
+                <span aria-hidden="true" style={{ fontSize: 16, lineHeight: 1 }}>↻</span>
+              </button>
+            </div>
           </div>
           <p className="hint" style={{ marginBottom: 8 }}>
             决策模式按当日全量事件建模。
