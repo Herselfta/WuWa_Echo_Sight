@@ -2153,6 +2153,73 @@ button:hover {
   overflow-y: auto;
 }
 
+.record-pattern-summary-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-bottom: 8px;
+}
+
+.record-pattern-summary-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
+.record-pattern-summary-title {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.record-pattern-chip-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.record-pattern-chip-list-tight {
+  gap: 4px;
+}
+
+.record-pattern-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.35;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.record-pattern-chip-soft {
+  white-space: normal;
+  border-radius: 8px;
+}
+
+.record-pattern-table th {
+  white-space: nowrap;
+}
+
+.record-pattern-name-cell,
+.record-pattern-metric-stack {
+  display: grid;
+  gap: 2px;
+}
+
+.record-pattern-name-cell .hint,
+.record-pattern-metric-stack .hint {
+  font-size: 11px;
+}
+
 .record-ci-cell {
   white-space: nowrap;
   font-size: 11px;

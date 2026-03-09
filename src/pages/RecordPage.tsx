@@ -67,6 +67,38 @@ function toPercent(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+const PATTERN_MODEL_MODE_LABEL: Record<string, string> = {
+  baseline_v1: "Baseline V1",
+  adaptive_v2: "Adaptive V2",
+};
+
+const PATTERN_WEIGHT_SOURCE_LABEL: Record<string, string> = {
+  fallback: "Fallback",
+  global: "Global",
+  bucketed: "Bucketed",
+};
+
+const PATTERN_EXPERT_LABEL: Record<string, string> = {
+  base: "Base",
+  markov: "Markov",
+  exact_motif: "Exact",
+  approx_shape: "Approx",
+  auto_cycle: "AutoCycle",
+  manual_cycle: "ManualCycle",
+};
+
+function formatPatternModelMode(mode: string): string {
+  return PATTERN_MODEL_MODE_LABEL[mode] ?? mode;
+}
+
+function formatPatternWeightSource(source: string): string {
+  return PATTERN_WEIGHT_SOURCE_LABEL[source] ?? source;
+}
+
+function formatPatternExpert(expert: string): string {
+  return PATTERN_EXPERT_LABEL[expert] ?? expert;
+}
+
 function parseGuessShapes(raw: string): string[] {
   const uniq = new Set<string>();
   for (const token of raw.split(/[\\s,，;；|]+/)) {
@@ -1986,47 +2018,121 @@ export function RecordPage() {
           </p>
           {patternDecision ? (
             <>
-              <p className="hint" style={{ marginBottom: 8 }}>
-                置信度 {toPercent(patternDecision.modelConfidence)} · 模型 {patternDecision.modelMode} · 模式长度 {patternDecision.minLen}-{patternDecision.maxLen} · 最小支持 {patternDecision.minSupport} · 回测 Top1 {toPercent(patternDecision.backtestSummary.top1Accuracy)} · Top3 {toPercent(patternDecision.backtestSummary.top3Coverage)} · LogLoss {patternDecision.backtestSummary.meanLogLoss.toFixed(3)}
-              </p>
-              <p className="hint" style={{ marginBottom: 8 }}>
-                权重 {patternDecision.blendWeights.source} · depth {patternDecision.blendWeights.sampleDepthBucket} / markov {patternDecision.blendWeights.markovHitBucket} / motif {patternDecision.blendWeights.motifHitBucket} · B {toPercent(patternDecision.blendWeights.base)} / M {toPercent(patternDecision.blendWeights.markov)} / X {toPercent(patternDecision.blendWeights.exactMotif)} / A {toPercent(patternDecision.blendWeights.approxShape)} / C {toPercent(patternDecision.blendWeights.autoCycle)}{patternDecision.blendWeights.onlineAdjusted ? " · online+" : ""}{patternDecision.activeExperts.length > 0 ? ` · 命中专家 ${patternDecision.activeExperts.join(", ")}` : ""}
-              </p>
+              <div className="record-pattern-summary-grid">
+                <div className="record-pattern-summary-card">
+                  <span className="record-pattern-summary-title">模型摘要</span>
+                  <div className="record-pattern-chip-list">
+                    <span className="record-pattern-chip">{formatPatternModelMode(patternDecision.modelMode)}</span>
+                    <span className="record-pattern-chip">置信 {toPercent(patternDecision.modelConfidence)}</span>
+                    <span className="record-pattern-chip">模式 {patternDecision.minLen}-{patternDecision.maxLen}</span>
+                    <span className="record-pattern-chip">支持 {patternDecision.minSupport}</span>
+                  </div>
+                </div>
+                <div className="record-pattern-summary-card">
+                  <span className="record-pattern-summary-title">回测</span>
+                  <div className="record-pattern-chip-list">
+                    <span className="record-pattern-chip">Top1 {toPercent(patternDecision.backtestSummary.top1Accuracy)}</span>
+                    <span className="record-pattern-chip">Top3 {toPercent(patternDecision.backtestSummary.top3Coverage)}</span>
+                    <span className="record-pattern-chip">MeanP {toPercent(patternDecision.backtestSummary.meanTrueProb)}</span>
+                    <span className="record-pattern-chip">LogLoss {patternDecision.backtestSummary.meanLogLoss.toFixed(3)}</span>
+                  </div>
+                </div>
+                <div className="record-pattern-summary-card">
+                  <span className="record-pattern-summary-title">上下文与权重</span>
+                  <div className="record-pattern-chip-list">
+                    <span className="record-pattern-chip">源 {formatPatternWeightSource(patternDecision.blendWeights.source)}</span>
+                    <span className="record-pattern-chip">depth {patternDecision.blendWeights.sampleDepthBucket}</span>
+                    <span className="record-pattern-chip">markov {patternDecision.blendWeights.markovHitBucket}</span>
+                    <span className="record-pattern-chip">motif {patternDecision.blendWeights.motifHitBucket}</span>
+                    {patternDecision.blendWeights.onlineAdjusted ? (
+                      <span className="record-pattern-chip">online+</span>
+                    ) : null}
+                  </div>
+                  <div className="record-pattern-chip-list">
+                    <span className="record-pattern-chip">B {toPercent(patternDecision.blendWeights.base)}</span>
+                    <span className="record-pattern-chip">M {toPercent(patternDecision.blendWeights.markov)}</span>
+                    <span className="record-pattern-chip">X {toPercent(patternDecision.blendWeights.exactMotif)}</span>
+                    <span className="record-pattern-chip">A {toPercent(patternDecision.blendWeights.approxShape)}</span>
+                    <span className="record-pattern-chip">C {toPercent(patternDecision.blendWeights.autoCycle)}</span>
+                  </div>
+                  {patternDecision.activeExperts.length > 0 ? (
+                    <div className="record-pattern-chip-list">
+                      {patternDecision.activeExperts.map((expert) => (
+                        <span key={expert} className="record-pattern-chip">
+                          {formatPatternExpert(expert)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
               <div className="record-dist-table-wrap">
-                <table className="table compact-table">
+                <table className="table compact-table record-pattern-table">
                   <thead>
                     <tr>
-                      <th>建议词条</th>
-                      <th>置信</th>
-                      <th>P(mix)</th>
-                      <th>P(base)</th>
-                      <th>P(markov)</th>
-                      <th>P(cycle)</th>
-                      <th>CI</th>
-                      <th>Boost</th>
-                      <th>触发模式</th>
+                      <th>建议</th>
+                      <th>综合</th>
+                      <th>专家拆解</th>
+                      <th>命中专家</th>
+                      <th>模式证据</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {patternDecision.suggestions.map((s) => (
+                    {patternDecision.suggestions.map((s, idx) => (
                       <tr key={s.statKey}>
-                        <td>{s.displayName}</td>
-                        <td>{toPercent(s.confidence)}</td>
-                        <td>{toPercent(s.probability)}</td>
-                        <td>{toPercent(s.baseProbability)}</td>
-                        <td>{toPercent(s.markovProbability)}</td>
-                        <td>{toPercent(s.cycleProbability)}</td>
                         <td>
-                          {toPercent(s.probabilityCiLow)} ~ {toPercent(s.probabilityCiHigh)}
+                          <div className="record-pattern-name-cell">
+                            <strong>{s.displayName}</strong>
+                            <span className="hint">#{idx + 1}</span>
+                          </div>
                         </td>
-                        <td>{s.motifBoost.toFixed(2)}</td>
-                        <td style={{ fontSize: 11, textAlign: "left" }}>
-                          {s.matchedPatterns.length > 0 ? s.matchedPatterns.join(" | ") : "—"}{s.matchedExperts.length > 0 ? ` [${s.matchedExperts.join(", ")}]` : ""}
+                        <td>
+                          <div className="record-pattern-metric-stack">
+                            <strong>{toPercent(s.probability)}</strong>
+                            <span className="hint">置信 {toPercent(s.confidence)}</span>
+                            <span className="hint">
+                              CI {toPercent(s.probabilityCiLow)} ~ {toPercent(s.probabilityCiHigh)}
+                            </span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="record-pattern-metric-stack">
+                            <span>B {toPercent(s.baseProbability)}</span>
+                            <span>M {toPercent(s.markovProbability)}</span>
+                            <span>C {toPercent(s.cycleProbability)}</span>
+                            <span>Boost {s.motifBoost.toFixed(2)}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="record-pattern-chip-list record-pattern-chip-list-tight">
+                            {s.matchedExperts.length > 0 ? (
+                              s.matchedExperts.map((expert) => (
+                                <span key={`${s.statKey}-${expert}`} className="record-pattern-chip">
+                                  {formatPatternExpert(expert)}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="hint">—</span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <div className="record-pattern-chip-list record-pattern-chip-list-tight">
+                            {s.matchedPatterns.length > 0 ? (
+                              s.matchedPatterns.map((pattern, patternIdx) => (
+                                <span key={`${s.statKey}-${patternIdx}`} className="record-pattern-chip record-pattern-chip-soft">
+                                  {pattern}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="hint">—</span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
                     {patternDecision.suggestions.length === 0 ? (
-                      <tr><td colSpan={9} className="chain-empty">暂无可用建议</td></tr>
+                      <tr><td colSpan={5} className="chain-empty">暂无可用建议</td></tr>
                     ) : null}
                   </tbody>
                 </table>
