@@ -28,7 +28,6 @@ export function DataToolsPage() {
   const [statKey, setStatKey] = useState("");
   const [tierIndex, setTierIndex] = useState("");
   const [eventTime, setEventTime] = useState("");
-  const [reorderMode, setReorderMode] = useState<"none" | "time_assist">("none");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -64,7 +63,6 @@ export function DataToolsPage() {
         statKey: statKey || undefined,
         tierIndex: tierIndex ? Number(tierIndex) : undefined,
         eventTime: eventTime ? new Date(eventTime).toISOString() : undefined,
-        reorderMode,
       });
       await loadEvents();
       setMessage(`事件修正成功，影响范围: ${result.affectedRange}`);
@@ -155,25 +153,10 @@ export function DataToolsPage() {
             时间
             <input type="datetime-local" value={eventTime} onChange={(e) => setEventTime(e.target.value)} />
           </label>
-          <label className="analysis-field-compact">
-            重排模式
-            <select
-              value={reorderMode}
-              onChange={(e) => setReorderMode(e.target.value as "none" | "time_assist")}
-            >
-              <option value="none">none</option>
-              <option value="time_assist">time_assist</option>
-            </select>
-          </label>
           <button
             type="submit"
             className="analysis-submit-btn"
             disabled={loading}
-            onClick={(e) => {
-              if (!window.confirm("确认修改事件？修改后将重算相关统计。")) {
-                e.preventDefault();
-              }
-            }}
           >
             提交修正
           </button>

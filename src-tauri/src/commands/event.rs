@@ -157,6 +157,8 @@ pub fn append_ordered_event(
     )
     .map_err(|e| format!("failed to sync current_substats: {e}"))?;
 
+    reorder_analysis_seq(&tx)?;
+
     let opened_slots_count: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(slot_no), 0) FROM echo_current_substats WHERE echo_id = ?1",
@@ -234,13 +236,8 @@ pub fn edit_ordered_event(
     let stat_key = input.stat_key.unwrap_or(prev_stat_key);
     let tier_index = input.tier_index.unwrap_or(prev_tier_index);
     let event_time = input.event_time.unwrap_or(prev_event_time);
-    let reorder_mode = input.reorder_mode.unwrap_or_else(|| "none".to_string());
-
     if !(1..=5).contains(&slot_no) {
         return Err(format!("slot_no out of range: {slot_no}"));
-    }
-    if reorder_mode != "none" && reorder_mode != "time_assist" {
-        return Err(format!("invalid reorder_mode: {reorder_mode}"));
     }
 
     parse_event_time(&event_time)?;
@@ -314,11 +311,7 @@ pub fn edit_ordered_event(
     )
     .map_err(|e| format!("failed to sync current_substats after edit: {e}"))?;
 
-    let affected_range = if reorder_mode == "time_assist" {
-        reorder_analysis_seq(&tx)?
-    } else {
-        format!("event:{}", input.event_id)
-    };
+    let affected_range = reorder_analysis_seq(&tx)?;
 
     let opened_slots_count: i64 = tx
         .query_row(
@@ -363,7 +356,7 @@ pub fn edit_ordered_event(
             input.event_id,
             before.to_string(),
             after.to_string(),
-            reorder_mode,
+            "time_assist",
             now_rfc3339()
         ],
     )

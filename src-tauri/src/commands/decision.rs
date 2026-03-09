@@ -4,12 +4,13 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::Connection;
 use tauri::State;
 
-use crate::db::{open_connection, AppState};
+use crate::db::{get_setting_f64, get_setting_i64, open_connection, AppState};
 use crate::domain::types::{
     AdaptiveNextSuggestion, DailyExactPatternRow, DailyPatternDecisionFilter,
     DailyPatternDecisionReport, DailyShapePatternRow, ManualCycleSuggestion,
     ManualGuessVerificationRow, ManualPatternSummary,
 };
+use crate::stats::wilson_interval;
 
 fn resolve_game_day(
     conn: &Connection,
@@ -203,6 +204,12 @@ pub fn get_daily_pattern_decision_internal(
 ) -> Result<DailyPatternDecisionReport, String> {
     let filter = filter.clone();
 
+    let analysis_window = get_setting_i64(conn, "analysis_window", 200).max(1) as usize;
+    let baseline_blend = get_setting_f64(conn, "baseline_blend", 0.65).clamp(0.05, 0.95);
+    let alpha = get_setting_f64(conn, "smoothing_alpha", 1.0).max(1e-9);
+    let confidence_level = get_setting_f64(conn, "confidence_level", 0.95).clamp(0.5, 0.999);
+    let mut notes = vec!["当前模型按全局序列建模，不区分 Cost/主词条/状态。".to_string()];
+
     let min_len = filter.min_len.unwrap_or(3).clamp(2, 12) as usize;
     let max_len = filter.max_len.unwrap_or(7).clamp(min_len as i64, 16) as usize;
     let min_support = filter.min_support.unwrap_or(2).clamp(1, 50);
@@ -242,13 +249,23 @@ pub fn get_daily_pattern_decision_internal(
             shape_patterns: Vec::new(),
             suggestions: Vec::new(),
             manual_summary: None,
-            notes: vec!["当前筛选条件下没有可用数据。".to_string()],
+            notes,
         });
     }
 
-    let seq = load_day_sequence(&conn, &game_day)?;
+    let mut seq = load_day_sequence(&conn, &game_day)?;
+    let raw_seq_len = seq.len();
+    if seq.len() > analysis_window {
+        notes.push(format!(
+            "已按 analysis_window={analysis_window} 截断为尾部序列（原始长度 {raw_seq_len}）。"
+        ));
+        let start = seq.len() - analysis_window;
+        seq = seq[start..].to_vec();
+    }
+
     let n = seq.len();
     if n == 0 {
+        notes.push("该日无事件，无法识别模式。".to_string());
         return Ok(DailyPatternDecisionReport {
             game_day,
             total_events: 0,
@@ -261,7 +278,7 @@ pub fn get_daily_pattern_decision_internal(
             shape_patterns: Vec::new(),
             suggestions: Vec::new(),
             manual_summary: None,
-            notes: vec!["该日无事件，无法识别模式。".to_string()],
+            notes,
         });
     }
 
@@ -408,7 +425,11 @@ pub fn get_daily_pattern_decision_internal(
     let mut shape_patterns = shape_patterns_all.clone();
     shape_patterns.truncate(top_k);
 
-    let alpha = 1.0f64;
+    let effective_max_order = if n >= 2 {
+        max_order.min(n - 1)
+    } else {
+        1
+    };
     let k = stat_keys.len().max(1) as f64;
     let denom = n as f64 + alpha * k;
     let base_probs: HashMap<String, f64> = stat_keys
@@ -418,9 +439,21 @@ pub fn get_daily_pattern_decision_internal(
             (s.clone(), (count + alpha) / denom)
         })
         .collect();
+    let base_ci_map: HashMap<String, (f64, f64)> = stat_keys
+        .iter()
+        .map(|k| {
+            let count = base_counts.get(k).copied().unwrap_or(0);
+            let (low, high) = if n > 0 {
+                wilson_interval(count, n as i64, confidence_level)
+            } else {
+                (0.0, 0.0)
+            };
+            (k.clone(), (low, high))
+        })
+        .collect();
 
     let mut markov_models: Vec<HashMap<Vec<String>, HashMap<String, i64>>> = Vec::new();
-    for order in 1..=max_order {
+    for order in 1..=effective_max_order {
         let mut model: HashMap<Vec<String>, HashMap<String, i64>> = HashMap::new();
         if n > order {
             for i in order..n {
@@ -434,7 +467,6 @@ pub fn get_daily_pattern_decision_internal(
 
     let mut markov_acc: HashMap<String, f64> = stat_keys.iter().map(|s| (s.clone(), 0.0)).collect();
     let mut markov_weight_total = 0.0;
-    let mut notes = vec!["当前模型按全局序列建模，不区分 Cost/主词条/状态。".to_string()];
 
     if let Some(best_long_shape) = shape_patterns_all
         .iter()
@@ -450,7 +482,7 @@ pub fn get_daily_pattern_decision_internal(
         ));
     }
 
-    for order in 1..=max_order {
+    for order in 1..=effective_max_order {
         if n < order {
             continue;
         }
@@ -495,7 +527,11 @@ pub fn get_daily_pattern_decision_internal(
             (key.clone(), p)
         })
         .collect();
-    let markov_blend = (markov_weight_total / (markov_weight_total + 2.0)).min(0.55);
+    let markov_blend = if baseline_blend <= 0.0 {
+        0.0
+    } else {
+        (markov_weight_total / (markov_weight_total + 2.0)).min(baseline_blend)
+    };
 
     let mut cycle_probs: HashMap<String, f64> =
         stat_keys.iter().map(|s| (s.clone(), 0.0)).collect();
@@ -797,6 +833,7 @@ pub fn get_daily_pattern_decision_internal(
 
     let mut suggestions = Vec::<AdaptiveNextSuggestion>::new();
     let mut total_score = 0.0;
+    let interval_total = n.max(1) as i64;
     for stat_key in &stat_keys {
         let base = *base_probs.get(stat_key).unwrap_or(&0.0);
         let markov = *markov_probs.get(stat_key).unwrap_or(&base);
@@ -817,6 +854,13 @@ pub fn get_daily_pattern_decision_internal(
         };
         let score = pre * (1.0 + motif_lambda * norm_boost);
         total_score += score;
+        let pseudo_success = ((score * interval_total as f64).round())
+            .clamp(0.0, interval_total as f64) as i64;
+        let (ci_low, ci_high) = wilson_interval(pseudo_success, interval_total, confidence_level);
+        let ci_width = ci_high - ci_low;
+        let (base_ci_low, base_ci_high) = base_ci_map.get(stat_key).copied().unwrap_or((0.0, 0.0));
+        let base_uncertainty = (base_ci_high - base_ci_low).clamp(0.0, 1.0);
+        let confidence = (1.0 - (ci_width * 0.8 + base_uncertainty * 0.2)).clamp(0.0, 1.0);
 
         let mut matched = matched_patterns_map.remove(stat_key).unwrap_or_default();
         matched.sort();
@@ -834,6 +878,9 @@ pub fn get_daily_pattern_decision_internal(
             markov_probability: markov,
             cycle_probability: cycle,
             motif_boost: norm_boost,
+            confidence,
+            probability_ci_low: ci_low,
+            probability_ci_high: ci_high,
             matched_patterns: matched,
         });
     }
@@ -851,7 +898,11 @@ pub fn get_daily_pattern_decision_internal(
     suggestions.truncate(top_k);
 
     let sample_conf = (n as f64 / (n as f64 + 20.0)).min(1.0);
-    let markov_conf = (markov_blend / 0.55).min(1.0);
+    let markov_conf = if baseline_blend > 0.0 {
+        (markov_blend / baseline_blend).min(1.0)
+    } else {
+        0.0
+    };
     let cycle_conf = (cycle_weight / 0.45).min(1.0);
     let motif_conf = if max_boost > 0.0 {
         1.0 - 1.0 / (1.0 + max_boost)
@@ -874,7 +925,7 @@ pub fn get_daily_pattern_decision_internal(
         min_len: min_len as i64,
         max_len: max_len as i64,
         min_support,
-        max_order: max_order as i64,
+        max_order: effective_max_order as i64,
         model_confidence,
         exact_patterns,
         shape_patterns,

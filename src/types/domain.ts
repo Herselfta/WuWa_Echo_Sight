@@ -131,6 +131,9 @@ export interface AdaptiveNextSuggestion {
   markovProbability: number;
   cycleProbability: number;
   motifBoost: number;
+  confidence: number;
+  probabilityCiLow: number;
+  probabilityCiHigh: number;
   matchedPatterns: string[];
 }
 

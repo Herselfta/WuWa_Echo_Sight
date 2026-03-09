@@ -169,7 +169,6 @@ pub struct EditOrderedEventInput {
     pub stat_key: Option<String>,
     pub tier_index: Option<i64>,
     pub event_time: Option<String>,
-    pub reorder_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,9 +292,6 @@ Daily pattern decision (MVP)
 #[serde(rename_all = "camelCase")]
 pub struct DailyPatternDecisionFilter {
     pub game_day: Option<String>,
-    pub cost_class: Option<i64>,
-    pub main_stat_key: Option<String>,
-    pub status: Option<String>,
     pub manual_start_index: Option<i64>,
     pub manual_cycle_len: Option<i64>,
     pub manual_guess_shapes: Option<Vec<String>>,
@@ -342,6 +338,9 @@ pub struct AdaptiveNextSuggestion {
     pub markov_probability: f64,
     pub cycle_probability: f64,
     pub motif_boost: f64,
+    pub confidence: f64,
+    pub probability_ci_low: f64,
+    pub probability_ci_high: f64,
     pub matched_patterns: Vec<String>,
 }
 

@@ -93,7 +93,6 @@ export async function editOrderedEvent(input: {
   statKey?: string;
   tierIndex?: number;
   eventTime?: string;
-  reorderMode?: "none" | "time_assist";
 }): Promise<{ ok: boolean; affectedRange: string }> {
   return invoke("edit_ordered_event", { input });
 }

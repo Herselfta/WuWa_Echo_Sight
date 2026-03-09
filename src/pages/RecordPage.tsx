@@ -78,25 +78,23 @@ function parseGuessShapes(raw: string): string[] {
   return Array.from(uniq);
 }
 
-const BEIJING_TZ = "Asia/Shanghai";
 const GAME_DAY_BOUNDARY_HOUR = 4;
 
-function formatBeijingDay(date: Date): string {
+function formatLocalGameDay(date: Date): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: BEIJING_TZ,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).format(date);
 }
 
-function computeBeijingGameDayFromDate(date: Date): string {
+function computeLocalGameDayFromDate(date: Date): string {
   const shifted = new Date(date.getTime() - GAME_DAY_BOUNDARY_HOUR * 60 * 60 * 1000);
-  return formatBeijingDay(shifted);
+  return formatLocalGameDay(shifted);
 }
 
-function computeBeijingGameDayFromIso(iso: string): string {
-  return computeBeijingGameDayFromDate(new Date(iso));
+function computeLocalGameDayFromIso(iso: string): string {
+  return computeLocalGameDayFromDate(new Date(iso));
 }
 
 /* ── chain helpers (same logic as EchoPoolPage) ───── */
@@ -459,7 +457,7 @@ export function RecordPage() {
   });
 
   const parsedHistoryLimit = parseInt(historyLimitStr, 10) || 20;
-  const currentBeijingGameDay = computeBeijingGameDayFromDate(new Date());
+  const currentLocalGameDay = computeLocalGameDayFromDate(new Date());
   const normalizedSelectedGameDays = useMemo(() => {
     if (Array.isArray(historySelectedGameDay)) {
       return historySelectedGameDay.filter((x) => !!x);
@@ -471,7 +469,7 @@ export function RecordPage() {
   }, [historySelectedGameDay]);
   const effectiveSelectedGameDays = normalizedSelectedGameDays.length > 0
     ? normalizedSelectedGameDays
-    : [currentBeijingGameDay];
+    : [currentLocalGameDay];
   const selectedGameDaySet = useMemo(
     () => new Set(normalizedSelectedGameDays),
     [normalizedSelectedGameDays],
@@ -514,6 +512,9 @@ export function RecordPage() {
         topK: 10,
       });
       setPatternDecision(report);
+    } catch (error) {
+      setPatternDecision(null);
+      showMsg(String(error), "error");
     } finally {
       setLoadingPatternDecision(false);
     }
@@ -971,15 +972,15 @@ export function RecordPage() {
 
   const historyGameDayOptions = useMemo(() => {
     const set = new Set<string>();
-    set.add(currentBeijingGameDay);
+    set.add(currentLocalGameDay);
     for (const day of normalizedSelectedGameDays) {
       set.add(day);
     }
     for (const row of eventHistory) {
-      set.add(computeBeijingGameDayFromIso(row.eventTime));
+      set.add(computeLocalGameDayFromIso(row.eventTime));
     }
     return Array.from(set).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-  }, [eventHistory, currentBeijingGameDay, normalizedSelectedGameDays]);
+  }, [eventHistory, currentLocalGameDay, normalizedSelectedGameDays]);
 
   useEffect(() => {
     if (historyDateAnchorIdx === null) return;
@@ -990,14 +991,14 @@ export function RecordPage() {
 
   const historyDateTriggerLabel = useMemo(() => {
     if (normalizedSelectedGameDays.length === 0) {
-      return `${currentBeijingGameDay}（默认今日）`;
+      return `${currentLocalGameDay}（默认今日）`;
     }
     if (normalizedSelectedGameDays.length === 1) {
       const day = normalizedSelectedGameDays[0];
-      return day === currentBeijingGameDay ? `${day}（今日）` : day;
+      return day === currentLocalGameDay ? `${day}（今日）` : day;
     }
     return `已选 ${normalizedSelectedGameDays.length} 天`;
-  }, [normalizedSelectedGameDays, currentBeijingGameDay]);
+  }, [normalizedSelectedGameDays, currentLocalGameDay]);
 
   const applyHistorySelectedDays = (selectedSet: Set<string>) => {
     setHistorySelectedGameDays(historyGameDayOptions.filter((day) => selectedSet.has(day)));
@@ -1033,7 +1034,7 @@ export function RecordPage() {
 
   const displayedHistory = useMemo(() => {
     const filtered = eventHistory.filter(
-      (r) => effectiveSelectedGameDaySet.has(computeBeijingGameDayFromIso(r.eventTime)),
+      (r) => effectiveSelectedGameDaySet.has(computeLocalGameDayFromIso(r.eventTime)),
     );
     return filtered.slice(0, parsedHistoryLimit);
   }, [eventHistory, effectiveSelectedGameDaySet, parsedHistoryLimit]);
@@ -1578,7 +1579,7 @@ export function RecordPage() {
                                 title="点击切换；Shift+点击可区间选择"
                                 onClick={(e) => onHistoryDateOptionClick(day, idx, e.shiftKey)}
                               >
-                                <span>{day === currentBeijingGameDay ? `${day}（今日）` : day}</span>
+                                <span>{day === currentLocalGameDay ? `${day}（今日）` : day}</span>
                                 <span className="record-history-date-check" aria-hidden="true">
                                   {isSelected ? "✓" : ""}
                                 </span>
@@ -1592,8 +1593,8 @@ export function RecordPage() {
                           type="button"
                           className="record-history-jump-btn"
                           onClick={() => {
-                            setHistoryDateAnchorIdx(historyGameDayOptions.indexOf(currentBeijingGameDay));
-                            setHistorySelectedGameDays([currentBeijingGameDay]);
+                            setHistoryDateAnchorIdx(historyGameDayOptions.indexOf(currentLocalGameDay));
+                            setHistorySelectedGameDays([currentLocalGameDay]);
                           }}
                         >
                           今日
@@ -1966,10 +1967,12 @@ export function RecordPage() {
                   <thead>
                     <tr>
                       <th>建议词条</th>
+                      <th>置信</th>
                       <th>P(mix)</th>
                       <th>P(base)</th>
                       <th>P(markov)</th>
                       <th>P(cycle)</th>
+                      <th>CI</th>
                       <th>Boost</th>
                       <th>触发模式</th>
                     </tr>
@@ -1978,10 +1981,14 @@ export function RecordPage() {
                     {patternDecision.suggestions.map((s) => (
                       <tr key={s.statKey}>
                         <td>{s.displayName}</td>
+                        <td>{toPercent(s.confidence)}</td>
                         <td>{toPercent(s.probability)}</td>
                         <td>{toPercent(s.baseProbability)}</td>
                         <td>{toPercent(s.markovProbability)}</td>
                         <td>{toPercent(s.cycleProbability)}</td>
+                        <td>
+                          {toPercent(s.probabilityCiLow)} ~ {toPercent(s.probabilityCiHigh)}
+                        </td>
                         <td>{s.motifBoost.toFixed(2)}</td>
                         <td style={{ fontSize: 11, textAlign: "left" }}>
                           {s.matchedPatterns.length > 0 ? s.matchedPatterns.join(" | ") : "—"}
@@ -1989,7 +1996,7 @@ export function RecordPage() {
                       </tr>
                     ))}
                     {patternDecision.suggestions.length === 0 ? (
-                      <tr><td colSpan={7} className="chain-empty">暂无可用建议</td></tr>
+                      <tr><td colSpan={9} className="chain-empty">暂无可用建议</td></tr>
                     ) : null}
                   </tbody>
                 </table>
