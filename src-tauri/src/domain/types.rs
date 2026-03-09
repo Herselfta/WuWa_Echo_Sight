@@ -334,15 +334,27 @@ pub struct AdaptiveNextSuggestion {
     pub stat_key: String,
     pub display_name: String,
     pub probability: f64,
+    pub joint_probability: f64,
     pub base_probability: f64,
     pub markov_probability: f64,
     pub cycle_probability: f64,
     pub motif_boost: f64,
+    pub best_tier_index: Option<i64>,
+    pub best_tier_probability: f64,
+    pub tier_suggestions: Vec<TierSuggestion>,
     pub confidence: f64,
     pub probability_ci_low: f64,
     pub probability_ci_high: f64,
     pub matched_patterns: Vec<String>,
     pub matched_experts: Vec<String>,
+    pub state_matched_signals: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TierSuggestion {
+    pub tier_index: i64,
+    pub probability: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -387,11 +399,14 @@ pub struct PatternBlendWeights {
     pub sample_depth_bucket: String,
     pub markov_hit_bucket: String,
     pub motif_hit_bucket: String,
+    pub active_stat_bucket: String,
+    pub tier_signal_bucket: String,
     pub base: f64,
     pub markov: f64,
     pub exact_motif: f64,
     pub approx_shape: f64,
     pub auto_cycle: f64,
+    pub state_context: f64,
     pub online_adjusted: bool,
 }
 
@@ -403,6 +418,39 @@ pub struct PatternBacktestSummary {
     pub top3_coverage: f64,
     pub mean_true_prob: f64,
     pub mean_log_loss: f64,
+    pub joint_top1_accuracy: f64,
+    pub joint_top3_coverage: f64,
+    pub mean_true_joint_prob: f64,
+    pub mean_joint_log_loss: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatternStateSummary {
+    pub active_stat_count_recent8: i64,
+    pub active_stat_count_recent12: i64,
+    pub active_stat_bucket: String,
+    pub zone_candidate: String,
+    pub zone_confidence: f64,
+    pub out_of_zone_streak: i64,
+    pub crit_signal: String,
+    pub tier_signal: String,
+    pub reversion_top_stats: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatternShadowComparison {
+    pub primary_model_mode: String,
+    pub shadow_model_mode: String,
+    pub primary_top1_accuracy: f64,
+    pub shadow_top1_accuracy: f64,
+    pub primary_joint_top1_accuracy: f64,
+    pub shadow_joint_top1_accuracy: f64,
+    pub primary_mean_log_loss: f64,
+    pub shadow_mean_log_loss: f64,
+    pub primary_mean_joint_log_loss: f64,
+    pub shadow_mean_joint_log_loss: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -418,6 +466,8 @@ pub struct DailyPatternDecisionReport {
     pub model_confidence: f64,
     pub blend_weights: PatternBlendWeights,
     pub backtest_summary: PatternBacktestSummary,
+    pub state_summary: Option<PatternStateSummary>,
+    pub shadow_comparison: Option<PatternShadowComparison>,
     pub active_experts: Vec<String>,
     pub exact_patterns: Vec<DailyExactPatternRow>,
     pub shape_patterns: Vec<DailyShapePatternRow>,

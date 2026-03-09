@@ -70,6 +70,8 @@ function toPercent(value: number): string {
 const PATTERN_MODEL_MODE_LABEL: Record<string, string> = {
   baseline_v1: "Baseline V1",
   adaptive_v2: "Adaptive V2",
+  adaptive_v3: "Adaptive V3",
+  adaptive_v3_shadow: "Adaptive V3 Shadow",
 };
 
 const PATTERN_WEIGHT_SOURCE_LABEL: Record<string, string> = {
@@ -84,6 +86,7 @@ const PATTERN_EXPERT_LABEL: Record<string, string> = {
   exact_motif: "Exact",
   approx_shape: "Approx",
   auto_cycle: "AutoCycle",
+  state_context: "State",
   manual_cycle: "ManualCycle",
 };
 
@@ -97,6 +100,13 @@ function formatPatternWeightSource(source: string): string {
 
 function formatPatternExpert(expert: string): string {
   return PATTERN_EXPERT_LABEL[expert] ?? expert;
+}
+
+function formatTierSuggestions(
+  suggestions: { tierIndex: number; probability: number }[] | undefined,
+): string {
+  if (!suggestions || suggestions.length === 0) return "—";
+  return suggestions.map((row) => `T${row.tierIndex} ${toPercent(row.probability)}`).join(" · ");
 }
 
 function parseGuessShapes(raw: string): string[] {
@@ -2035,6 +2045,10 @@ export function RecordPage() {
                     <span className="record-pattern-chip">Top3 {toPercent(patternDecision.backtestSummary.top3Coverage)}</span>
                     <span className="record-pattern-chip">MeanP {toPercent(patternDecision.backtestSummary.meanTrueProb)}</span>
                     <span className="record-pattern-chip">LogLoss {patternDecision.backtestSummary.meanLogLoss.toFixed(3)}</span>
+                    <span className="record-pattern-chip">J-Top1 {toPercent(patternDecision.backtestSummary.jointTop1Accuracy)}</span>
+                    <span className="record-pattern-chip">J-Top3 {toPercent(patternDecision.backtestSummary.jointTop3Coverage)}</span>
+                    <span className="record-pattern-chip">J-MeanP {toPercent(patternDecision.backtestSummary.meanTrueJointProb)}</span>
+                    <span className="record-pattern-chip">J-LogLoss {patternDecision.backtestSummary.meanJointLogLoss.toFixed(3)}</span>
                   </div>
                 </div>
                 <div className="record-pattern-summary-card">
@@ -2044,6 +2058,8 @@ export function RecordPage() {
                     <span className="record-pattern-chip">depth {patternDecision.blendWeights.sampleDepthBucket}</span>
                     <span className="record-pattern-chip">markov {patternDecision.blendWeights.markovHitBucket}</span>
                     <span className="record-pattern-chip">motif {patternDecision.blendWeights.motifHitBucket}</span>
+                    <span className="record-pattern-chip">active {patternDecision.blendWeights.activeStatBucket}</span>
+                    <span className="record-pattern-chip">tier {patternDecision.blendWeights.tierSignalBucket}</span>
                     {patternDecision.blendWeights.onlineAdjusted ? (
                       <span className="record-pattern-chip">online+</span>
                     ) : null}
@@ -2054,6 +2070,7 @@ export function RecordPage() {
                     <span className="record-pattern-chip">X {toPercent(patternDecision.blendWeights.exactMotif)}</span>
                     <span className="record-pattern-chip">A {toPercent(patternDecision.blendWeights.approxShape)}</span>
                     <span className="record-pattern-chip">C {toPercent(patternDecision.blendWeights.autoCycle)}</span>
+                    <span className="record-pattern-chip">S {toPercent(patternDecision.blendWeights.stateContext)}</span>
                   </div>
                   {patternDecision.activeExperts.length > 0 ? (
                     <div className="record-pattern-chip-list">
@@ -2065,16 +2082,63 @@ export function RecordPage() {
                     </div>
                   ) : null}
                 </div>
+                {patternDecision.stateSummary ? (
+                  <div className="record-pattern-summary-card">
+                    <span className="record-pattern-summary-title">状态摘要</span>
+                    <div className="record-pattern-chip-list">
+                      <span className="record-pattern-chip">zone {patternDecision.stateSummary.zoneCandidate}</span>
+                      <span className="record-pattern-chip">zoneP {toPercent(patternDecision.stateSummary.zoneConfidence)}</span>
+                      <span className="record-pattern-chip">active8 {patternDecision.stateSummary.activeStatCountRecent8}</span>
+                      <span className="record-pattern-chip">active12 {patternDecision.stateSummary.activeStatCountRecent12}</span>
+                      <span className="record-pattern-chip">crit {patternDecision.stateSummary.critSignal}</span>
+                      <span className="record-pattern-chip">tier {patternDecision.stateSummary.tierSignal}</span>
+                      <span className="record-pattern-chip">outZone {patternDecision.stateSummary.outOfZoneStreak}</span>
+                    </div>
+                    {patternDecision.stateSummary.reversionTopStats.length > 0 ? (
+                      <div className="record-pattern-chip-list">
+                        {patternDecision.stateSummary.reversionTopStats.map((statKey) => (
+                          <span key={statKey} className="record-pattern-chip">
+                            回归 {statKey}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {patternDecision.shadowComparison ? (
+                  <div className="record-pattern-summary-card">
+                    <span className="record-pattern-summary-title">Shadow 对照</span>
+                    <div className="record-pattern-chip-list">
+                      <span className="record-pattern-chip">
+                        {formatPatternModelMode(patternDecision.shadowComparison.primaryModelMode)} Top1 {toPercent(patternDecision.shadowComparison.primaryTop1Accuracy)}
+                      </span>
+                      <span className="record-pattern-chip">
+                        {formatPatternModelMode(patternDecision.shadowComparison.shadowModelMode)} Top1 {toPercent(patternDecision.shadowComparison.shadowTop1Accuracy)}
+                      </span>
+                      <span className="record-pattern-chip">
+                        J {toPercent(patternDecision.shadowComparison.primaryJointTop1Accuracy)} → {toPercent(patternDecision.shadowComparison.shadowJointTop1Accuracy)}
+                      </span>
+                      <span className="record-pattern-chip">
+                        LogLoss {patternDecision.shadowComparison.primaryMeanLogLoss.toFixed(3)} → {patternDecision.shadowComparison.shadowMeanLogLoss.toFixed(3)}
+                      </span>
+                      <span className="record-pattern-chip">
+                        J-LogLoss {patternDecision.shadowComparison.primaryMeanJointLogLoss.toFixed(3)} → {patternDecision.shadowComparison.shadowMeanJointLogLoss.toFixed(3)}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
               </div>
               <div className="record-dist-table-wrap">
                 <table className="table compact-table record-pattern-table">
                   <thead>
                     <tr>
-                      <th>建议</th>
-                      <th>综合</th>
+                      <th>建议词条</th>
+                      <th>综合(联合)</th>
+                      <th>词条概率</th>
+                      <th>预测档位</th>
                       <th>专家拆解</th>
                       <th>命中专家</th>
-                      <th>模式证据</th>
+                      <th>状态证据</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2088,11 +2152,24 @@ export function RecordPage() {
                         </td>
                         <td>
                           <div className="record-pattern-metric-stack">
+                            <strong>{toPercent(s.jointProbability)}</strong>
+                            <span className="hint">#{idx + 1}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="record-pattern-metric-stack">
                             <strong>{toPercent(s.probability)}</strong>
                             <span className="hint">置信 {toPercent(s.confidence)}</span>
                             <span className="hint">
                               CI {toPercent(s.probabilityCiLow)} ~ {toPercent(s.probabilityCiHigh)}
                             </span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="record-pattern-metric-stack">
+                            <strong>{s.bestTierIndex != null ? `T${s.bestTierIndex}` : "—"}</strong>
+                            <span className="hint">P {toPercent(s.bestTierProbability)}</span>
+                            <span className="hint">{formatTierSuggestions(s.tierSuggestions)}</span>
                           </div>
                         </td>
                         <td>
@@ -2118,8 +2195,8 @@ export function RecordPage() {
                         </td>
                         <td>
                           <div className="record-pattern-chip-list record-pattern-chip-list-tight">
-                            {s.matchedPatterns.length > 0 ? (
-                              s.matchedPatterns.map((pattern, patternIdx) => (
+                            {s.stateMatchedSignals.length > 0 ? (
+                              s.stateMatchedSignals.map((pattern, patternIdx) => (
                                 <span key={`${s.statKey}-${patternIdx}`} className="record-pattern-chip record-pattern-chip-soft">
                                   {pattern}
                                 </span>
@@ -2132,7 +2209,7 @@ export function RecordPage() {
                       </tr>
                     ))}
                     {patternDecision.suggestions.length === 0 ? (
-                      <tr><td colSpan={5} className="chain-empty">暂无可用建议</td></tr>
+                      <tr><td colSpan={7} className="chain-empty">暂无可用建议</td></tr>
                     ) : null}
                   </tbody>
                 </table>

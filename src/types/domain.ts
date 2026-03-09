@@ -127,15 +127,25 @@ export interface AdaptiveNextSuggestion {
   statKey: string;
   displayName: string;
   probability: number;
+  jointProbability: number;
   baseProbability: number;
   markovProbability: number;
   cycleProbability: number;
   motifBoost: number;
+  bestTierIndex?: number | null;
+  bestTierProbability: number;
+  tierSuggestions: TierSuggestion[];
   confidence: number;
   probabilityCiLow: number;
   probabilityCiHigh: number;
   matchedPatterns: string[];
   matchedExperts: string[];
+  stateMatchedSignals: string[];
+}
+
+export interface TierSuggestion {
+  tierIndex: number;
+  probability: number;
 }
 
 export interface ManualGuessVerificationRow {
@@ -172,11 +182,14 @@ export interface PatternBlendWeights {
   sampleDepthBucket: string;
   markovHitBucket: string;
   motifHitBucket: string;
+  activeStatBucket: string;
+  tierSignalBucket: string;
   base: number;
   markov: number;
   exactMotif: number;
   approxShape: number;
   autoCycle: number;
+  stateContext: number;
   onlineAdjusted: boolean;
 }
 
@@ -186,6 +199,35 @@ export interface PatternBacktestSummary {
   top3Coverage: number;
   meanTrueProb: number;
   meanLogLoss: number;
+  jointTop1Accuracy: number;
+  jointTop3Coverage: number;
+  meanTrueJointProb: number;
+  meanJointLogLoss: number;
+}
+
+export interface PatternStateSummary {
+  activeStatCountRecent8: number;
+  activeStatCountRecent12: number;
+  activeStatBucket: string;
+  zoneCandidate: string;
+  zoneConfidence: number;
+  outOfZoneStreak: number;
+  critSignal: string;
+  tierSignal: string;
+  reversionTopStats: string[];
+}
+
+export interface PatternShadowComparison {
+  primaryModelMode: string;
+  shadowModelMode: string;
+  primaryTop1Accuracy: number;
+  shadowTop1Accuracy: number;
+  primaryJointTop1Accuracy: number;
+  shadowJointTop1Accuracy: number;
+  primaryMeanLogLoss: number;
+  shadowMeanLogLoss: number;
+  primaryMeanJointLogLoss: number;
+  shadowMeanJointLogLoss: number;
 }
 
 export interface DailyPatternDecisionReport {
@@ -199,6 +241,8 @@ export interface DailyPatternDecisionReport {
   modelConfidence: number;
   blendWeights: PatternBlendWeights;
   backtestSummary: PatternBacktestSummary;
+  stateSummary?: PatternStateSummary | null;
+  shadowComparison?: PatternShadowComparison | null;
   activeExperts: string[];
   exactPatterns: DailyExactPatternRow[];
   shapePatterns: DailyShapePatternRow[];

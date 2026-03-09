@@ -21,11 +21,18 @@ pub fn init_database(db_path: &Path) -> Result<(), String> {
         include_str!("migrations/001_init.sql"),
         include_str!("migrations/002_expectation_presets.sql"),
         include_str!("migrations/003_pattern_learning.sql"),
+        include_str!("migrations/004_pattern_learning_v3.sql"),
     ];
 
     for (idx, migration_sql) in migrations.iter().enumerate() {
-        conn.execute_batch(migration_sql)
-            .map_err(|e| format!("failed to run migration {}: {e}", idx + 1))?;
+        if let Err(error) = conn.execute_batch(migration_sql) {
+            let message = error.to_string();
+            let is_duplicate_actual_tier =
+                idx == 3 && message.contains("duplicate column name: actual_tier_index");
+            if !is_duplicate_actual_tier {
+                return Err(format!("failed to run migration {}: {error}", idx + 1));
+            }
+        }
     }
     Ok(())
 }

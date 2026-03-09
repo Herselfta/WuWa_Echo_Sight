@@ -301,6 +301,8 @@ struct PredictionBucket {
     sample_depth_bucket: String,
     markov_hit_bucket: String,
     motif_hit_bucket: String,
+    active_stat_bucket: String,
+    tier_signal_bucket: String,
 }
 
 impl PredictionBucket {
@@ -319,15 +321,19 @@ struct V2ComponentBuild {
     exact_motif_probs: HashMap<String, f64>,
     approx_shape_probs: HashMap<String, f64>,
     auto_cycle_probs: HashMap<String, f64>,
+    state_context_probs: HashMap<String, f64>,
     markov_active: bool,
     exact_motif_active: bool,
     approx_shape_active: bool,
     auto_cycle_active: bool,
+    state_context_active: bool,
     motif_strength: f64,
     approx_strength: f64,
     bucket: PredictionBucket,
     matched_patterns_map: HashMap<String, Vec<String>>,
     matched_experts_map: HashMap<String, Vec<String>>,
+    state_signal_map: HashMap<String, Vec<String>>,
+    state_summary: crate::pattern_state::SequenceStateFeatures,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -337,6 +343,7 @@ struct InternalBlendWeights {
     exact_motif: f64,
     approx_shape: f64,
     auto_cycle: f64,
+    state_context: f64,
 }
 
 #[derive(Clone)]
@@ -352,6 +359,14 @@ struct TrainedAdaptiveModel {
 struct StoredPredictionRow {
     stat_key: String,
     probability: f64,
+    #[serde(default)]
+    best_tier_index: Option<i64>,
+    #[serde(default)]
+    best_tier_probability: f64,
+    #[serde(default)]
+    joint_probability: f64,
+    #[serde(default)]
+    tier_suggestions: Vec<crate::domain::types::TierSuggestion>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -361,6 +376,7 @@ struct StoredPredictionContext {
     weight_source: String,
     active_experts: Vec<String>,
     tail_signature: String,
+    state_summary: Option<crate::domain::types::PatternStateSummary>,
 }
 
 fn empty_backtest_summary() -> PatternBacktestSummary {
@@ -370,6 +386,10 @@ fn empty_backtest_summary() -> PatternBacktestSummary {
         top3_coverage: 0.0,
         mean_true_prob: 0.0,
         mean_log_loss: 0.0,
+        joint_top1_accuracy: 0.0,
+        joint_top3_coverage: 0.0,
+        mean_true_joint_prob: 0.0,
+        mean_joint_log_loss: 0.0,
     }
 }
 
@@ -379,20 +399,24 @@ fn empty_pattern_blend_weights() -> PatternBlendWeights {
         sample_depth_bucket: "n/a".to_string(),
         markov_hit_bucket: "none".to_string(),
         motif_hit_bucket: "none".to_string(),
+        active_stat_bucket: "n/a".to_string(),
+        tier_signal_bucket: "n/a".to_string(),
         base: 1.0,
         markov: 0.0,
         exact_motif: 0.0,
         approx_shape: 0.0,
         auto_cycle: 0.0,
+        state_context: 0.0,
         online_adjusted: false,
     }
 }
 
 fn resolve_report_model_mode(mode: &str) -> String {
-    if mode == "baseline_v1" {
-        "baseline_v1".to_string()
-    } else {
-        "adaptive_v2".to_string()
+    match mode {
+        "baseline_v1" => "baseline_v1".to_string(),
+        "adaptive_v3" => "adaptive_v3".to_string(),
+        "adaptive_v3_shadow" => "adaptive_v3_shadow".to_string(),
+        _ => "adaptive_v2".to_string(),
     }
 }
 
@@ -401,13 +425,15 @@ fn normalize_internal_weights(weights: &mut InternalBlendWeights) {
         + weights.markov
         + weights.exact_motif
         + weights.approx_shape
-        + weights.auto_cycle;
+        + weights.auto_cycle
+        + weights.state_context;
     if total <= 1e-9 {
         weights.base = 1.0;
         weights.markov = 0.0;
         weights.exact_motif = 0.0;
         weights.approx_shape = 0.0;
         weights.auto_cycle = 0.0;
+        weights.state_context = 0.0;
         return;
     }
     weights.base /= total;
@@ -415,6 +441,7 @@ fn normalize_internal_weights(weights: &mut InternalBlendWeights) {
     weights.exact_motif /= total;
     weights.approx_shape /= total;
     weights.auto_cycle /= total;
+    weights.state_context /= total;
 }
 
 fn default_v2_weights(baseline_blend: f64) -> InternalBlendWeights {
@@ -424,6 +451,20 @@ fn default_v2_weights(baseline_blend: f64) -> InternalBlendWeights {
         exact_motif: 0.18,
         approx_shape: 0.12,
         auto_cycle: 0.12,
+        state_context: 0.0,
+    };
+    normalize_internal_weights(&mut weights);
+    weights
+}
+
+fn default_v3_weights() -> InternalBlendWeights {
+    let mut weights = InternalBlendWeights {
+        base: 0.22,
+        markov: 0.18,
+        exact_motif: 0.16,
+        approx_shape: 0.14,
+        auto_cycle: 0.10,
+        state_context: 0.20,
     };
     normalize_internal_weights(&mut weights);
     weights
@@ -445,6 +486,41 @@ fn resolve_active_v2_weights(
     if !components.auto_cycle_active {
         weights.auto_cycle = 0.0;
     }
+    if !components.state_context_active {
+        weights.state_context = 0.0;
+    }
+    normalize_internal_weights(&mut weights);
+    weights
+}
+
+fn cap_base_weight(
+    mut weights: InternalBlendWeights,
+    components: &V2ComponentBuild,
+) -> InternalBlendWeights {
+    let non_base = [
+        (components.markov_active, weights.markov),
+        (components.exact_motif_active, weights.exact_motif),
+        (components.approx_shape_active, weights.approx_shape),
+        (components.auto_cycle_active, weights.auto_cycle),
+        (components.state_context_active, weights.state_context),
+    ]
+    .into_iter()
+    .filter(|(active, weight)| *active && *weight > 0.0)
+    .collect::<Vec<_>>();
+    if non_base.len() < 2 || weights.base <= 0.35 {
+        return weights;
+    }
+
+    let overflow = weights.base - 0.35;
+    let total_non_base = non_base.iter().map(|(_, weight)| *weight).sum::<f64>();
+    weights.base = 0.35;
+    if total_non_base > 1e-9 {
+        weights.markov += overflow * weights.markov / total_non_base;
+        weights.exact_motif += overflow * weights.exact_motif / total_non_base;
+        weights.approx_shape += overflow * weights.approx_shape / total_non_base;
+        weights.auto_cycle += overflow * weights.auto_cycle / total_non_base;
+        weights.state_context += overflow * weights.state_context / total_non_base;
+    }
     normalize_internal_weights(&mut weights);
     weights
 }
@@ -460,12 +536,31 @@ fn internal_weights_to_public(
         sample_depth_bucket: bucket.sample_depth_bucket.clone(),
         markov_hit_bucket: bucket.markov_hit_bucket.clone(),
         motif_hit_bucket: bucket.motif_hit_bucket.clone(),
+        active_stat_bucket: bucket.active_stat_bucket.clone(),
+        tier_signal_bucket: bucket.tier_signal_bucket.clone(),
         base: weights.base,
         markov: weights.markov,
         exact_motif: weights.exact_motif,
         approx_shape: weights.approx_shape,
         auto_cycle: weights.auto_cycle,
+        state_context: weights.state_context,
         online_adjusted,
+    }
+}
+
+fn public_state_summary(
+    features: &crate::pattern_state::SequenceStateFeatures,
+) -> crate::domain::types::PatternStateSummary {
+    crate::domain::types::PatternStateSummary {
+        active_stat_count_recent8: features.active_stat_count_recent8,
+        active_stat_count_recent12: features.active_stat_count_recent12,
+        active_stat_bucket: features.active_stat_bucket.clone(),
+        zone_candidate: features.zone_candidate.clone(),
+        zone_confidence: features.zone_confidence,
+        out_of_zone_streak: features.out_of_zone_streak,
+        crit_signal: features.crit_signal.clone(),
+        tier_signal: features.tier_signal.clone(),
+        reversion_top_stats: features.reversion_top_stats.clone(),
     }
 }
 
@@ -929,19 +1024,36 @@ fn build_v2_components(
         exact_motif_probs,
         approx_shape_probs,
         auto_cycle_probs,
+        state_context_probs: base_probs.clone(),
         markov_active: markov_max_order_hit > 0,
         exact_motif_active: exact_strength > 1e-9,
         approx_shape_active: approx_strength > 1e-9,
         auto_cycle_active: auto_cycle_strength > 1e-9,
+        state_context_active: false,
         motif_strength,
         approx_strength,
         bucket: PredictionBucket {
             sample_depth_bucket,
             markov_hit_bucket,
             motif_hit_bucket,
+            active_stat_bucket: "n/a".to_string(),
+            tier_signal_bucket: "n/a".to_string(),
         },
         matched_patterns_map,
         matched_experts_map,
+        state_signal_map: HashMap::new(),
+        state_summary: crate::pattern_state::SequenceStateFeatures {
+            active_stat_count_recent8: 0,
+            active_stat_count_recent12: 0,
+            active_stat_bucket: "n/a".to_string(),
+            zone_candidate: "mixed".to_string(),
+            zone_confidence: 0.0,
+            out_of_zone_streak: 0,
+            crit_signal: "none".to_string(),
+            tier_signal: "n/a".to_string(),
+            reversion_top_stats: Vec::new(),
+            reversion_score_by_stat: HashMap::new(),
+        },
     }
 }
 
@@ -1001,6 +1113,7 @@ fn fit_v2_weights_for_samples(
         exact_motif: raw[2] / total,
         approx_shape: raw[3] / total,
         auto_cycle: raw[4] / total,
+        state_context: 0.0,
     };
     normalize_internal_weights(&mut weights);
     weights
@@ -1019,13 +1132,15 @@ fn blend_v2_probs(
         let exact = *components.exact_motif_probs.get(stat_key).unwrap_or(&base);
         let approx = *components.approx_shape_probs.get(stat_key).unwrap_or(&base);
         let cycle = *components.auto_cycle_probs.get(stat_key).unwrap_or(&base);
+        let state_context = *components.state_context_probs.get(stat_key).unwrap_or(&base);
         mixed.insert(
             stat_key.clone(),
             resolved.base * base
                 + resolved.markov * markov
                 + resolved.exact_motif * exact
                 + resolved.approx_shape * approx
-                + resolved.auto_cycle * cycle,
+                + resolved.auto_cycle * cycle
+                + resolved.state_context * state_context,
         );
     }
     normalize_probability_map(&mut mixed);
@@ -1069,7 +1184,581 @@ fn active_v2_experts(
     if resolved.auto_cycle > 0.0 {
         experts.push("auto_cycle".to_string());
     }
+    if resolved.state_context > 0.0 {
+        experts.push("state_context".to_string());
+    }
     experts
+}
+
+#[derive(Default, Clone)]
+struct V3ExpertTracker {
+    sample_count: usize,
+    log_sums: [f64; 6],
+}
+
+impl V3ExpertTracker {
+    fn update(&mut self, components: &V2ComponentBuild, actual_stat_key: &str) {
+        let expert_maps = [
+            &components.base_probs,
+            &components.markov_probs,
+            &components.exact_motif_probs,
+            &components.approx_shape_probs,
+            &components.auto_cycle_probs,
+            &components.state_context_probs,
+        ];
+        for (idx, expert_map) in expert_maps.iter().enumerate() {
+            let p = expert_map
+                .get(actual_stat_key)
+                .copied()
+                .unwrap_or(1e-9)
+                .clamp(1e-9, 1.0);
+            self.log_sums[idx] += p.ln();
+        }
+        self.sample_count += 1;
+    }
+
+    fn to_weights(&self) -> InternalBlendWeights {
+        if self.sample_count == 0 {
+            return default_v3_weights();
+        }
+        let prior = default_v3_weights();
+        let priors = [
+            prior.base,
+            prior.markov,
+            prior.exact_motif,
+            prior.approx_shape,
+            prior.auto_cycle,
+            prior.state_context,
+        ];
+        let means = self
+            .log_sums
+            .iter()
+            .map(|score| *score / self.sample_count as f64)
+            .collect::<Vec<_>>();
+        let mean_score = means.iter().sum::<f64>() / means.len().max(1) as f64;
+        let mut raw = [0.0; 6];
+        for idx in 0..6 {
+            raw[idx] = priors[idx] * ((means[idx] - mean_score) / 0.45).exp();
+        }
+        let total = raw.iter().sum::<f64>().max(1e-9);
+        let mut weights = InternalBlendWeights {
+            base: raw[0] / total,
+            markov: raw[1] / total,
+            exact_motif: raw[2] / total,
+            approx_shape: raw[3] / total,
+            auto_cycle: raw[4] / total,
+            state_context: raw[5] / total,
+        };
+        normalize_internal_weights(&mut weights);
+        weights
+    }
+}
+
+struct JointPredictionBundle {
+    tier_suggestions: HashMap<String, Vec<crate::domain::types::TierSuggestion>>,
+    tier_probs: HashMap<String, HashMap<i64, f64>>,
+    best_tier_index: HashMap<String, Option<i64>>,
+    best_tier_probability: HashMap<String, f64>,
+    joint_probability: HashMap<String, f64>,
+    ranking: Vec<(String, Option<i64>, f64)>,
+}
+
+fn normalize_tier_probability_map(map: &mut HashMap<i64, f64>) {
+    let total = map.values().sum::<f64>();
+    if total <= 1e-9 {
+        let uniform = 1.0 / map.len().max(1) as f64;
+        for value in map.values_mut() {
+            *value = uniform;
+        }
+        return;
+    }
+    for value in map.values_mut() {
+        *value /= total;
+    }
+}
+
+fn load_recent_global_event_sequence(
+    conn: &Connection,
+    limit: usize,
+) -> Result<Vec<crate::pattern_state::PatternEventLite>, String> {
+    let limit = limit.max(1) as i64;
+    let mut stmt = conn
+        .prepare(
+            "SELECT stat_key, tier_index, analysis_seq
+             FROM (
+               SELECT stat_key, tier_index, analysis_seq, game_day, created_seq
+               FROM ordered_events
+               ORDER BY game_day DESC, analysis_seq DESC, created_seq DESC
+               LIMIT ?1
+             )
+             ORDER BY analysis_seq ASC",
+        )
+        .map_err(|e| format!("failed to prepare recent global event sequence query: {e}"))?;
+    let rows = stmt
+        .query_map([limit], |row| {
+            Ok(crate::pattern_state::PatternEventLite {
+                stat_key: row.get::<_, String>(0)?,
+                tier_index: row.get::<_, i64>(1)?,
+                analysis_seq: row.get::<_, i64>(2)?,
+            })
+        })
+        .map_err(|e| format!("failed to query recent global event sequence: {e}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("failed to collect recent global event sequence: {e}"))
+}
+
+fn load_day_event_sequence(
+    conn: &Connection,
+    game_day: &str,
+) -> Result<Vec<crate::pattern_state::PatternEventLite>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT stat_key, tier_index, analysis_seq
+             FROM ordered_events
+             WHERE game_day = ?1
+             ORDER BY analysis_seq ASC, created_seq ASC",
+        )
+        .map_err(|e| format!("failed to prepare day event sequence query: {e}"))?;
+    let rows = stmt
+        .query_map([game_day], |row| {
+            Ok(crate::pattern_state::PatternEventLite {
+                stat_key: row.get::<_, String>(0)?,
+                tier_index: row.get::<_, i64>(1)?,
+                analysis_seq: row.get::<_, i64>(2)?,
+            })
+        })
+        .map_err(|e| format!("failed to query day event sequence: {e}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("failed to collect day event sequence: {e}"))
+}
+
+fn build_state_context_expert(
+    events: &[crate::pattern_state::PatternEventLite],
+    stat_keys: &[String],
+    base_probs: &HashMap<String, f64>,
+    display_map: Option<&HashMap<String, String>>,
+) -> (
+    HashMap<String, f64>,
+    bool,
+    HashMap<String, Vec<String>>,
+    HashMap<String, Vec<String>>,
+    HashMap<String, Vec<String>>,
+    crate::pattern_state::SequenceStateFeatures,
+) {
+    let summary = crate::pattern_state::compute_sequence_state_features(events, stat_keys);
+    let mut probs = HashMap::new();
+    let mut labels = HashMap::<String, Vec<String>>::new();
+    let mut sources = HashMap::<String, Vec<String>>::new();
+    let mut state_signals = HashMap::<String, Vec<String>>::new();
+    let crit_gate_on = summary.active_stat_bucket == "low" && summary.crit_signal != "none";
+
+    for stat_key in stat_keys {
+        let base = *base_probs.get(stat_key).unwrap_or(&0.0);
+        let mut multiplier = 1.0;
+        let mut signals = Vec::<String>::new();
+
+        if summary.zone_candidate != "mixed" {
+            if crate::pattern_state::stat_matches_zone(stat_key, &summary.zone_candidate) {
+                multiplier *= 1.0 + 0.45 * summary.zone_confidence;
+                signals.push(format!(
+                    "区间 {} {:.0}%",
+                    summary.zone_candidate,
+                    summary.zone_confidence * 100.0
+                ));
+            } else {
+                multiplier *= (1.0 - 0.20 * summary.zone_confidence).max(0.55);
+            }
+        }
+
+        let reversion_score = summary
+            .reversion_score_by_stat
+            .get(stat_key)
+            .copied()
+            .unwrap_or(0.0);
+        multiplier *= reversion_score.exp();
+        if reversion_score > 0.04 {
+            signals.push(format!("回归 {:.2}", reversion_score));
+        }
+
+        if crit_gate_on && matches!(stat_key.as_str(), "crit_rate" | "crit_dmg") {
+            multiplier *= 1.20;
+            signals.push("低活跃暴区门控".to_string());
+        }
+
+        probs.insert(stat_key.clone(), (base * multiplier).max(1e-9));
+
+        if !signals.is_empty() {
+            let display_name = stat_display_name(display_map, stat_key);
+            labels.insert(
+                stat_key.clone(),
+                vec![format!("状态上下文 → {} [{}]", display_name, signals.join(" · "))],
+            );
+            sources.insert(stat_key.clone(), vec!["state_context".to_string()]);
+            state_signals.insert(stat_key.clone(), signals);
+        }
+    }
+
+    normalize_probability_map(&mut probs);
+    let active = summary.zone_confidence >= 0.35
+        || summary.crit_signal != "none"
+        || summary
+            .reversion_score_by_stat
+            .values()
+            .any(|score| *score > 0.04);
+    (probs, active, labels, sources, state_signals, summary)
+}
+
+fn enrich_v3_components(
+    mut components: V2ComponentBuild,
+    events: &[crate::pattern_state::PatternEventLite],
+    stat_keys: &[String],
+    display_map: Option<&HashMap<String, String>>,
+) -> V2ComponentBuild {
+    let (state_context_probs, state_context_active, labels, sources, state_signals, summary) =
+        build_state_context_expert(events, stat_keys, &components.base_probs, display_map);
+    for (stat_key, entries) in labels {
+        components
+            .matched_patterns_map
+            .entry(stat_key)
+            .or_default()
+            .extend(entries.into_iter());
+    }
+    for (stat_key, entries) in sources {
+        components
+            .matched_experts_map
+            .entry(stat_key)
+            .or_default()
+            .extend(entries.into_iter());
+    }
+    components.state_context_probs = state_context_probs;
+    components.state_context_active = state_context_active;
+    components.state_signal_map = state_signals;
+    components.state_summary = summary.clone();
+    components.bucket.active_stat_bucket = summary.active_stat_bucket.clone();
+    components.bucket.tier_signal_bucket = summary.tier_signal.clone();
+    components
+}
+
+fn build_tier_distribution_for_stat(
+    events: &[crate::pattern_state::PatternEventLite],
+    stat_key: &str,
+    tier_signal: &str,
+) -> (
+    HashMap<i64, f64>,
+    Vec<crate::domain::types::TierSuggestion>,
+    Option<i64>,
+    f64,
+) {
+    let tiers = (1..=8).collect::<Vec<_>>();
+    let occurrences = events
+        .iter()
+        .filter(|event| event.stat_key == stat_key)
+        .collect::<Vec<_>>();
+    let mut tier_base = tiers
+        .iter()
+        .map(|tier| (*tier, 0.0))
+        .collect::<HashMap<_, _>>();
+    for event in &occurrences {
+        if let Some(value) = tier_base.get_mut(&event.tier_index) {
+            *value += 1.0;
+        }
+    }
+    for value in tier_base.values_mut() {
+        *value += 0.5;
+    }
+    normalize_tier_probability_map(&mut tier_base);
+
+    let mut transition_counts = HashMap::<i64, HashMap<i64, f64>>::new();
+    for pair in occurrences.windows(2) {
+        *transition_counts
+            .entry(pair[0].tier_index)
+            .or_default()
+            .entry(pair[1].tier_index)
+            .or_insert(0.0) += 1.0;
+    }
+    let last_tier = occurrences.last().map(|event| event.tier_index);
+    let mut tier_transition = last_tier
+        .and_then(|tier| transition_counts.get(&tier).cloned())
+        .unwrap_or_default();
+    let transition_total = tier_transition.values().sum::<f64>();
+    let transition_enabled = transition_total >= 3.0;
+    if transition_enabled {
+        for tier in &tiers {
+            tier_transition.entry(*tier).or_insert(0.25);
+        }
+        normalize_tier_probability_map(&mut tier_transition);
+    }
+
+    let mut tier_state_prior = tiers
+        .iter()
+        .map(|tier| (*tier, 0.15))
+        .collect::<HashMap<_, _>>();
+    if let Some(last_tier) = last_tier {
+        match tier_signal {
+            "stable" => {
+                *tier_state_prior.entry(last_tier).or_insert(0.0) += 1.2;
+            }
+            "step" => {
+                if last_tier > 1 {
+                    *tier_state_prior.entry(last_tier - 1).or_insert(0.0) += 1.0;
+                }
+                if last_tier < 8 {
+                    *tier_state_prior.entry(last_tier + 1).or_insert(0.0) += 1.0;
+                }
+                *tier_state_prior.entry(last_tier).or_insert(0.0) += 0.4;
+            }
+            _ => {
+                for tier in &tiers {
+                    if (*tier - last_tier).abs() >= 2 {
+                        *tier_state_prior.entry(*tier).or_insert(0.0) += 0.8;
+                    }
+                }
+                *tier_state_prior.entry(1).or_insert(0.0) += 0.4;
+                *tier_state_prior.entry(8).or_insert(0.0) += 0.4;
+            }
+        }
+    }
+    normalize_tier_probability_map(&mut tier_state_prior);
+
+    let mut tier_probs = tiers
+        .iter()
+        .map(|tier| (*tier, 0.0))
+        .collect::<HashMap<_, _>>();
+    let mut base_weight = 0.45;
+    let mut transition_weight = if transition_enabled { 0.40 } else { 0.0 };
+    let mut state_weight = if last_tier.is_some() { 0.15 } else { 0.0 };
+    let total_weight = (base_weight + transition_weight + state_weight).max(1e-9);
+    base_weight /= total_weight;
+    transition_weight /= total_weight;
+    state_weight /= total_weight;
+    for tier in &tiers {
+        tier_probs.insert(
+            *tier,
+            base_weight * tier_base.get(tier).copied().unwrap_or(0.0)
+                + transition_weight * tier_transition.get(tier).copied().unwrap_or(0.0)
+                + state_weight * tier_state_prior.get(tier).copied().unwrap_or(0.0),
+        );
+    }
+    normalize_tier_probability_map(&mut tier_probs);
+
+    let mut tier_suggestions = tier_probs
+        .iter()
+        .map(|(tier_index, probability)| crate::domain::types::TierSuggestion {
+            tier_index: *tier_index,
+            probability: *probability,
+        })
+        .collect::<Vec<_>>();
+    tier_suggestions.sort_by(|a, b| {
+        b.probability
+            .partial_cmp(&a.probability)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.tier_index.cmp(&b.tier_index))
+    });
+    tier_suggestions.truncate(3);
+    let best = tier_suggestions.first().cloned();
+    (
+        tier_probs,
+        tier_suggestions,
+        best.as_ref().map(|row| row.tier_index),
+        best.as_ref().map(|row| row.probability).unwrap_or(0.0),
+    )
+}
+
+fn build_joint_predictions(
+    events: &[crate::pattern_state::PatternEventLite],
+    stat_keys: &[String],
+    stat_probs: &HashMap<String, f64>,
+    state_summary: &crate::pattern_state::SequenceStateFeatures,
+) -> JointPredictionBundle {
+    let mut tier_suggestions = HashMap::new();
+    let mut tier_probs = HashMap::new();
+    let mut best_tier_index = HashMap::new();
+    let mut best_tier_probability = HashMap::new();
+    let mut joint_probability = HashMap::new();
+    let mut ranking = Vec::new();
+
+    for stat_key in stat_keys {
+        let (tier_prob_map, suggestions, best_tier, best_prob) =
+            build_tier_distribution_for_stat(events, stat_key, &state_summary.tier_signal);
+        let stat_probability = stat_probs.get(stat_key).copied().unwrap_or(0.0);
+        let joint = stat_probability * best_prob;
+        tier_suggestions.insert(stat_key.clone(), suggestions);
+        tier_probs.insert(stat_key.clone(), tier_prob_map);
+        best_tier_index.insert(stat_key.clone(), best_tier);
+        best_tier_probability.insert(stat_key.clone(), best_prob);
+        joint_probability.insert(stat_key.clone(), joint);
+        ranking.push((stat_key.clone(), best_tier, joint));
+    }
+    ranking.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(Ordering::Equal));
+
+    JointPredictionBundle {
+        tier_suggestions,
+        tier_probs,
+        best_tier_index,
+        best_tier_probability,
+        joint_probability,
+        ranking,
+    }
+}
+
+fn run_walk_forward_backtest_v3(
+    conn: &Connection,
+    stat_keys: &[String],
+    config: &BacktestConfig,
+    bucket_min_samples: usize,
+) -> Result<TrainedAdaptiveModel, String> {
+    let sample_limit = get_setting_i64(conn, "pattern_backtest_samples", 96).clamp(24, 320) as usize;
+    let history_limit = sample_limit + config.analysis_window.max(32) + 24;
+    let history = load_recent_global_event_sequence(conn, history_limit)?;
+    if history.len() < 12 {
+        return Ok(TrainedAdaptiveModel {
+            fallback_weights: default_v3_weights(),
+            global_weights: default_v3_weights(),
+            bucket_weights: HashMap::new(),
+            bucket_min_samples,
+            backtest_summary: empty_backtest_summary(),
+        });
+    }
+
+    let start_idx = history
+        .len()
+        .saturating_sub(sample_limit.saturating_add(1))
+        .max(8);
+    let mut global_tracker = V3ExpertTracker::default();
+    let mut bucket_trackers = HashMap::<String, V3ExpertTracker>::new();
+
+    let mut top1_hits = 0.0;
+    let mut top3_hits = 0.0;
+    let mut true_prob_sum = 0.0;
+    let mut log_loss_sum = 0.0;
+    let mut joint_top1_hits = 0.0;
+    let mut joint_top3_hits = 0.0;
+    let mut true_joint_prob_sum = 0.0;
+    let mut joint_log_loss_sum = 0.0;
+    let mut sample_count = 0.0;
+
+    for idx in start_idx..history.len() {
+        let prefix_events = &history[..idx];
+        if prefix_events.len() < 8 {
+            continue;
+        }
+        let prefix_seq = prefix_events
+            .iter()
+            .map(|event| event.stat_key.clone())
+            .collect::<Vec<_>>();
+        let components = enrich_v3_components(
+            build_v2_components(&prefix_seq, stat_keys, config, None),
+            prefix_events,
+            stat_keys,
+            None,
+        );
+        let bucket_key = components.bucket.key();
+        let tracker_weights = bucket_trackers
+            .get(&bucket_key)
+            .filter(|tracker| tracker.sample_count >= bucket_min_samples)
+            .map(|tracker| tracker.to_weights())
+            .or_else(|| {
+                if global_tracker.sample_count >= bucket_min_samples {
+                    Some(global_tracker.to_weights())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(default_v3_weights);
+        let resolved_weights = cap_base_weight(resolve_active_v2_weights(tracker_weights, &components), &components);
+        let stat_probs = blend_v2_probs(stat_keys, &components, resolved_weights);
+        let joint_bundle = build_joint_predictions(prefix_events, stat_keys, &stat_probs, &components.state_summary);
+        let actual = &history[idx];
+
+        let actual_stat_prob = stat_probs
+            .get(&actual.stat_key)
+            .copied()
+            .unwrap_or(1e-9)
+            .clamp(1e-9, 1.0);
+        let actual_joint_prob = actual_stat_prob
+            * joint_bundle
+                .tier_probs
+                .get(&actual.stat_key)
+                .and_then(|probs| probs.get(&actual.tier_index))
+                .copied()
+                .unwrap_or(1e-9)
+                .clamp(1e-9, 1.0);
+        let mut stat_ranking = stat_probs.iter().collect::<Vec<_>>();
+        stat_ranking.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(Ordering::Equal));
+        if stat_ranking.first().map(|(key, _)| key.as_str()) == Some(actual.stat_key.as_str()) {
+            top1_hits += 1.0;
+        }
+        if stat_ranking
+            .iter()
+            .take(3)
+            .any(|(key, _)| key.as_str() == actual.stat_key.as_str())
+        {
+            top3_hits += 1.0;
+        }
+        if joint_bundle
+            .ranking
+            .first()
+            .map(|(stat_key, tier_index, _)| {
+                stat_key == &actual.stat_key && *tier_index == Some(actual.tier_index)
+            })
+            .unwrap_or(false)
+        {
+            joint_top1_hits += 1.0;
+        }
+        if joint_bundle.ranking.iter().take(3).any(|(stat_key, tier_index, _)| {
+            stat_key == &actual.stat_key && *tier_index == Some(actual.tier_index)
+        }) {
+            joint_top3_hits += 1.0;
+        }
+        true_prob_sum += actual_stat_prob;
+        log_loss_sum += -actual_stat_prob.ln();
+        true_joint_prob_sum += actual_joint_prob;
+        joint_log_loss_sum += -actual_joint_prob.ln();
+        sample_count += 1.0;
+
+        global_tracker.update(&components, &actual.stat_key);
+        bucket_trackers
+            .entry(bucket_key)
+            .or_default()
+            .update(&components, &actual.stat_key);
+    }
+
+    if sample_count <= 0.0 {
+        return Ok(TrainedAdaptiveModel {
+            fallback_weights: default_v3_weights(),
+            global_weights: default_v3_weights(),
+            bucket_weights: HashMap::new(),
+            bucket_min_samples,
+            backtest_summary: empty_backtest_summary(),
+        });
+    }
+
+    let bucket_weights = bucket_trackers
+        .into_iter()
+        .map(|(key, tracker)| (key, (tracker.to_weights(), tracker.sample_count)))
+        .collect::<HashMap<_, _>>();
+
+    Ok(TrainedAdaptiveModel {
+        fallback_weights: default_v3_weights(),
+        global_weights: if global_tracker.sample_count > 0 {
+            global_tracker.to_weights()
+        } else {
+            default_v3_weights()
+        },
+        bucket_weights,
+        bucket_min_samples,
+        backtest_summary: PatternBacktestSummary {
+            sample_count: sample_count as i64,
+            top1_accuracy: (top1_hits / sample_count).clamp(0.0, 1.0),
+            top3_coverage: (top3_hits / sample_count).clamp(0.0, 1.0),
+            mean_true_prob: (true_prob_sum / sample_count).clamp(0.0, 1.0),
+            mean_log_loss: (log_loss_sum / sample_count).max(0.0),
+            joint_top1_accuracy: (joint_top1_hits / sample_count).clamp(0.0, 1.0),
+            joint_top3_coverage: (joint_top3_hits / sample_count).clamp(0.0, 1.0),
+            mean_true_joint_prob: (true_joint_prob_sum / sample_count).clamp(0.0, 1.0),
+            mean_joint_log_loss: (joint_log_loss_sum / sample_count).max(0.0),
+        },
+    })
 }
 
 fn run_walk_forward_backtest(
@@ -1182,6 +1871,10 @@ fn run_walk_forward_backtest(
             top3_coverage: (top3_hits / sample_count).clamp(0.0, 1.0),
             mean_true_prob: (true_prob_sum / sample_count).clamp(0.0, 1.0),
             mean_log_loss: (log_loss_sum / sample_count).max(0.0),
+            joint_top1_accuracy: (top1_hits / sample_count).clamp(0.0, 1.0),
+            joint_top3_coverage: (top3_hits / sample_count).clamp(0.0, 1.0),
+            mean_true_joint_prob: (true_prob_sum / sample_count).clamp(0.0, 1.0),
+            mean_joint_log_loss: (log_loss_sum / sample_count).max(0.0),
         },
     })
 }
@@ -1193,6 +1886,7 @@ fn expert_prob_blob(components: &V2ComponentBuild) -> HashMap<String, HashMap<St
         ("exact_motif".to_string(), components.exact_motif_probs.clone()),
         ("approx_shape".to_string(), components.approx_shape_probs.clone()),
         ("auto_cycle".to_string(), components.auto_cycle_probs.clone()),
+        ("state_context".to_string(), components.state_context_probs.clone()),
     ])
 }
 
@@ -1243,12 +1937,26 @@ fn apply_online_adjustment(
 
     matched.reverse();
     let mut scores = HashMap::<String, f64>::new();
-    for expert in ["base", "markov", "exact_motif", "approx_shape", "auto_cycle"] {
+    for expert in [
+        "base",
+        "markov",
+        "exact_motif",
+        "approx_shape",
+        "auto_cycle",
+        "state_context",
+    ] {
         scores.insert(expert.to_string(), 0.0);
     }
     let mut initialized = false;
     for (context, actual_stat_key) in matched {
-        for expert in ["base", "markov", "exact_motif", "approx_shape", "auto_cycle"] {
+        for expert in [
+            "base",
+            "markov",
+            "exact_motif",
+            "approx_shape",
+            "auto_cycle",
+            "state_context",
+        ] {
             let expert_prob = context
                 .expert_probs
                 .get(expert)
@@ -1274,6 +1982,7 @@ fn apply_online_adjustment(
         ("exact_motif", adjusted.exact_motif),
         ("approx_shape", adjusted.approx_shape),
         ("auto_cycle", adjusted.auto_cycle),
+        ("state_context", adjusted.state_context),
     ]
     .into_iter()
     .filter(|(_, weight)| *weight > 0.0)
@@ -1297,18 +2006,21 @@ fn apply_online_adjustment(
     adjusted.exact_motif *= factor("exact_motif");
     adjusted.approx_shape *= factor("approx_shape");
     adjusted.auto_cycle *= factor("auto_cycle");
+    adjusted.state_context *= factor("state_context");
     normalize_internal_weights(&mut adjusted);
     Ok((adjusted, true))
 }
 
 fn persist_pattern_prediction_run(
     conn: &Connection,
+    mode: &str,
     game_day: &str,
     seq: &[String],
     weights: &PatternBlendWeights,
     components: &V2ComponentBuild,
     active_experts: &[String],
     suggestions: &[AdaptiveNextSuggestion],
+    state_summary: Option<&crate::domain::types::PatternStateSummary>,
 ) -> Result<(), String> {
     if get_setting_i64(conn, "pattern_online_learning", 1) <= 0 {
         return Ok(());
@@ -1316,10 +2028,11 @@ fn persist_pattern_prediction_run(
 
     let tail_signature = build_tail_signature(seq);
     let context_hash = format!(
-        "{}|{}|{}|adaptive_v2|0",
+        "{}|{}|{}|{}|0",
         game_day,
         seq.len(),
-        tail_signature
+        tail_signature,
+        mode
     );
     let context = StoredPredictionContext {
         bucket: components.bucket.clone(),
@@ -1327,12 +2040,17 @@ fn persist_pattern_prediction_run(
         weight_source: weights.source.clone(),
         active_experts: active_experts.to_vec(),
         tail_signature,
+        state_summary: state_summary.cloned(),
     };
     let predictions = suggestions
         .iter()
         .map(|row| StoredPredictionRow {
             stat_key: row.stat_key.clone(),
             probability: row.probability,
+            best_tier_index: row.best_tier_index,
+            best_tier_probability: row.best_tier_probability,
+            joint_probability: row.joint_probability,
+            tier_suggestions: row.tier_suggestions.clone(),
         })
         .collect::<Vec<_>>();
 
@@ -1346,7 +2064,7 @@ fn persist_pattern_prediction_run(
             context_hash,
             game_day,
             seq.len() as i64,
-            "adaptive_v2",
+            mode,
             serde_json::to_string(weights)
                 .map_err(|e| format!("failed to serialize pattern weights: {e}"))?,
             serde_json::to_string(&predictions)
@@ -1373,6 +2091,7 @@ pub fn get_daily_pattern_decision_internal(
     let confidence_level = get_setting_f64(conn, "confidence_level", 0.95).clamp(0.5, 0.999);
     let motif_lambda = 1.15f64;
     let deployment_mode = get_setting_string(conn, "pattern_model_mode", "adaptive_v2");
+    let v3_enabled = matches!(deployment_mode.as_str(), "adaptive_v3" | "adaptive_v3_shadow");
     let bucket_min_samples = get_setting_i64(conn, "pattern_bucket_min_samples", 12).clamp(4, 64)
         as usize;
     let mut notes = vec!["当前模型按全局序列建模，不区分 Cost/主词条/状态。".to_string()];
@@ -1417,6 +2136,16 @@ pub fn get_daily_pattern_decision_internal(
         baseline_blend,
         bucket_min_samples,
     )?;
+    let v3_model = if v3_enabled {
+        Some(run_walk_forward_backtest_v3(
+            conn,
+            &stat_keys,
+            &backtest_config,
+            bucket_min_samples,
+        )?)
+    } else {
+        None
+    };
     if v2_model.backtest_summary.sample_count > 0 {
         let (global_weights, _) = select_v2_weights_for_bucket(
             &v2_model,
@@ -1424,6 +2153,8 @@ pub fn get_daily_pattern_decision_internal(
                 sample_depth_bucket: "100+".to_string(),
                 markov_hit_bucket: "long".to_string(),
                 motif_hit_bucket: "strong".to_string(),
+                active_stat_bucket: "high".to_string(),
+                tier_signal_bucket: "stable".to_string(),
             },
         );
         notes.push(format!(
@@ -1458,6 +2189,8 @@ pub fn get_daily_pattern_decision_internal(
             model_confidence: 0.0,
             blend_weights: empty_blend_weights.clone(),
             backtest_summary: v2_model.backtest_summary.clone(),
+            state_summary: None,
+            shadow_comparison: None,
             active_experts: Vec::new(),
             exact_patterns: Vec::new(),
             shape_patterns: Vec::new(),
@@ -1467,15 +2200,19 @@ pub fn get_daily_pattern_decision_internal(
         });
     }
 
-    let mut seq = load_day_sequence(&conn, &game_day)?;
-    let raw_seq_len = seq.len();
-    if seq.len() > analysis_window {
+    let mut day_events = load_day_event_sequence(&conn, &game_day)?;
+    let raw_seq_len = day_events.len();
+    if day_events.len() > analysis_window {
         notes.push(format!(
             "已按 analysis_window={analysis_window} 截断为尾部序列（原始长度 {raw_seq_len}）。"
         ));
-        let start = seq.len() - analysis_window;
-        seq = seq[start..].to_vec();
+        let start = day_events.len() - analysis_window;
+        day_events = day_events[start..].to_vec();
     }
+    let seq = day_events
+        .iter()
+        .map(|event| event.stat_key.clone())
+        .collect::<Vec<_>>();
 
     let n = seq.len();
     if n == 0 {
@@ -1491,6 +2228,8 @@ pub fn get_daily_pattern_decision_internal(
             model_confidence: 0.0,
             blend_weights: empty_blend_weights.clone(),
             backtest_summary: v2_model.backtest_summary.clone(),
+            state_summary: None,
+            shadow_comparison: None,
             active_experts: Vec::new(),
             exact_patterns: Vec::new(),
             shape_patterns: Vec::new(),
@@ -2145,15 +2884,20 @@ pub fn get_daily_pattern_decision_internal(
                 .cloned()
                 .unwrap_or_else(|| stat_key.clone()),
             probability: score,
+            joint_probability: score,
             base_probability: base,
             markov_probability: markov,
             cycle_probability: cycle,
             motif_boost: norm_boost,
+            best_tier_index: None,
+            best_tier_probability: 0.0,
+            tier_suggestions: Vec::new(),
             confidence,
             probability_ci_low: ci_low,
             probability_ci_high: ci_high,
             matched_patterns: matched,
             matched_experts,
+            state_matched_signals: Vec::new(),
         });
     }
 
@@ -2202,6 +2946,206 @@ pub fn get_daily_pattern_decision_internal(
         + 0.15 * motif_conf
         + 0.25 * backtest_conf)
         .min(1.0);
+    let manual_mode = manual_cycle_len.is_some() || !manual_guess_shapes.is_empty();
+    let mut report_backtest_summary = v2_model.backtest_summary.clone();
+    let mut report_blend_weights = blend_weights.clone();
+    let mut report_active_experts = active_experts.clone();
+    let mut report_suggestions = suggestions.clone();
+    let mut report_model_confidence = model_confidence;
+    let mut report_state_summary: Option<crate::domain::types::PatternStateSummary> = None;
+    let mut report_shadow_comparison: Option<crate::domain::types::PatternShadowComparison> = None;
+
+    if let Some(v3_model) = &v3_model {
+        let v3_components = enrich_v3_components(
+            v2_components.clone(),
+            &day_events,
+            &stat_keys,
+            Some(&display_map),
+        );
+        let (v3_weights_raw, v3_weight_source) =
+            select_v2_weights_for_bucket(v3_model, &v3_components.bucket);
+        let (v3_weights_online, v3_online_adjusted) =
+            apply_online_adjustment(conn, &v3_components.bucket, v3_weights_raw, &v3_components)?;
+        let v3_selected_weights = cap_base_weight(
+            resolve_active_v2_weights(v3_weights_online, &v3_components),
+            &v3_components,
+        );
+        let v3_blend_weights = internal_weights_to_public(
+            v3_selected_weights,
+            v3_weight_source,
+            &v3_components.bucket,
+            v3_online_adjusted,
+        );
+        let v3_active_experts = active_v2_experts(&v3_components, &v3_selected_weights);
+        let mut v3_stat_probs = blend_v2_probs(&stat_keys, &v3_components, v3_selected_weights);
+        if cycle_weight > 0.0 {
+            for stat_key in &stat_keys {
+                let auto_prob = v3_stat_probs.get(stat_key).copied().unwrap_or(0.0);
+                let cycle_prob = cycle_probs.get(stat_key).copied().unwrap_or(auto_prob);
+                v3_stat_probs.insert(
+                    stat_key.clone(),
+                    (1.0 - cycle_weight) * auto_prob + cycle_weight * cycle_prob,
+                );
+            }
+            normalize_probability_map(&mut v3_stat_probs);
+        }
+        let joint_bundle =
+            build_joint_predictions(&day_events, &stat_keys, &v3_stat_probs, &v3_components.state_summary);
+        let mut v3_matched_patterns_map = v3_components.matched_patterns_map.clone();
+        let mut v3_matched_experts_map = v3_components.matched_experts_map.clone();
+        if let Some(manual) = &manual_summary {
+            for row in &manual.position_suggestions {
+                push_label(
+                    &mut v3_matched_patterns_map,
+                    &row.stat_key,
+                    format!("手动周期 next@pos {:.0}% (n={})", row.probability * 100.0, row.count),
+                );
+                push_source(&mut v3_matched_experts_map, &row.stat_key, "manual_cycle");
+            }
+        }
+
+        let mut v3_suggestions = Vec::<AdaptiveNextSuggestion>::new();
+        for stat_key in &stat_keys {
+            let stat_probability = v3_stat_probs.get(stat_key).copied().unwrap_or(0.0);
+            let pseudo_success = ((stat_probability * interval_total as f64).round())
+                .clamp(0.0, interval_total as f64) as i64;
+            let (ci_low, ci_high) = wilson_interval(pseudo_success, interval_total, confidence_level);
+            let ci_width = ci_high - ci_low;
+            let (base_ci_low, base_ci_high) = base_ci_map.get(stat_key).copied().unwrap_or((0.0, 0.0));
+            let base_uncertainty = (base_ci_high - base_ci_low).clamp(0.0, 1.0);
+            let confidence = (1.0 - (ci_width * 0.8 + base_uncertainty * 0.2)).clamp(0.0, 1.0);
+
+            let mut matched = v3_matched_patterns_map.remove(stat_key).unwrap_or_default();
+            matched.sort();
+            matched.dedup();
+            matched.truncate(5);
+            let mut matched_experts = v3_matched_experts_map.remove(stat_key).unwrap_or_default();
+            matched_experts.sort();
+            matched_experts.dedup();
+            let mut state_signals = v3_components
+                .state_signal_map
+                .get(stat_key)
+                .cloned()
+                .unwrap_or_default();
+            state_signals.sort();
+            state_signals.dedup();
+
+            let cycle_probability = if cycle_weight > 0.0 {
+                *cycle_probs.get(stat_key).unwrap_or(&0.0)
+            } else {
+                *v2_components.auto_cycle_probs.get(stat_key).unwrap_or(&0.0)
+            };
+
+            v3_suggestions.push(AdaptiveNextSuggestion {
+                stat_key: stat_key.clone(),
+                display_name: display_map
+                    .get(stat_key)
+                    .cloned()
+                    .unwrap_or_else(|| stat_key.clone()),
+                probability: stat_probability,
+                joint_probability: joint_bundle
+                    .joint_probability
+                    .get(stat_key)
+                    .copied()
+                    .unwrap_or(0.0),
+                base_probability: *base_probs.get(stat_key).unwrap_or(&0.0),
+                markov_probability: *markov_probs.get(stat_key).unwrap_or(&0.0),
+                cycle_probability,
+                motif_boost: *v3_components
+                    .state_context_probs
+                    .get(stat_key)
+                    .unwrap_or(&0.0),
+                best_tier_index: joint_bundle
+                    .best_tier_index
+                    .get(stat_key)
+                    .copied()
+                    .flatten(),
+                best_tier_probability: joint_bundle
+                    .best_tier_probability
+                    .get(stat_key)
+                    .copied()
+                    .unwrap_or(0.0),
+                tier_suggestions: joint_bundle
+                    .tier_suggestions
+                    .get(stat_key)
+                    .cloned()
+                    .unwrap_or_default(),
+                confidence,
+                probability_ci_low: ci_low,
+                probability_ci_high: ci_high,
+                matched_patterns: matched,
+                matched_experts,
+                state_matched_signals: state_signals,
+            });
+        }
+        v3_suggestions.sort_by(|a, b| {
+            b.joint_probability
+                .partial_cmp(&a.joint_probability)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| {
+                    b.probability
+                        .partial_cmp(&a.probability)
+                        .unwrap_or(Ordering::Equal)
+                })
+        });
+        v3_suggestions.truncate(top_k);
+
+        let v3_sample_conf = (n as f64 / (n as f64 + 20.0)).min(1.0);
+        let v3_logloss_conf =
+            (1.0 - (v3_model.backtest_summary.mean_joint_log_loss / 1.6)).clamp(0.0, 1.0);
+        let v3_backtest_conf = ((v3_model.backtest_summary.joint_top1_accuracy * 0.45
+            + v3_model.backtest_summary.joint_top3_coverage * 0.20
+            + v3_model.backtest_summary.top1_accuracy * 0.15
+            + v3_logloss_conf * 0.20)
+            * (v3_model.backtest_summary.sample_count as f64
+                / (v3_model.backtest_summary.sample_count as f64 + 24.0)))
+            .clamp(0.0, 1.0);
+        let v3_model_confidence = (0.20 * v3_sample_conf
+            + 0.15 * v3_blend_weights.markov
+            + 0.10 * v3_blend_weights.auto_cycle
+            + 0.15 * v3_blend_weights.state_context
+            + 0.40 * v3_backtest_conf)
+            .clamp(0.0, 1.0);
+
+        report_state_summary = Some(public_state_summary(&v3_components.state_summary));
+        report_shadow_comparison = Some(crate::domain::types::PatternShadowComparison {
+            primary_model_mode: "adaptive_v2".to_string(),
+            shadow_model_mode: "adaptive_v3".to_string(),
+            primary_top1_accuracy: v2_model.backtest_summary.top1_accuracy,
+            shadow_top1_accuracy: v3_model.backtest_summary.top1_accuracy,
+            primary_joint_top1_accuracy: v2_model.backtest_summary.joint_top1_accuracy,
+            shadow_joint_top1_accuracy: v3_model.backtest_summary.joint_top1_accuracy,
+            primary_mean_log_loss: v2_model.backtest_summary.mean_log_loss,
+            shadow_mean_log_loss: v3_model.backtest_summary.mean_log_loss,
+            primary_mean_joint_log_loss: v2_model.backtest_summary.mean_joint_log_loss,
+            shadow_mean_joint_log_loss: v3_model.backtest_summary.mean_joint_log_loss,
+        });
+
+        if deployment_mode == "adaptive_v3" {
+            report_backtest_summary = v3_model.backtest_summary.clone();
+            report_blend_weights = v3_blend_weights.clone();
+            report_active_experts = v3_active_experts.clone();
+            report_suggestions = v3_suggestions.clone();
+            report_model_confidence = v3_model_confidence;
+            notes.push("当前 pattern_model_mode=adaptive_v3，建议按词条+档位联合概率排序。".to_string());
+        } else {
+            notes.push("当前 pattern_model_mode=adaptive_v3_shadow；界面仍显示 V2 建议，V3 仅做影子评估与日志。".to_string());
+        }
+
+        if !manual_mode {
+            persist_pattern_prediction_run(
+                conn,
+                deployment_mode.as_str(),
+                &game_day,
+                &seq,
+                &v3_blend_weights,
+                &v3_components,
+                &v3_active_experts,
+                &v3_suggestions,
+                report_state_summary.as_ref(),
+            )?;
+        }
+    }
 
     if n < 20 {
         notes.push("当日样本较少，系统会自动回退到基础概率。".to_string());
@@ -2215,8 +3159,7 @@ pub fn get_daily_pattern_decision_internal(
         notes.push("当前 pattern_model_mode=v2_canary。".to_string());
     }
 
-    let manual_mode = manual_cycle_len.is_some() || !manual_guess_shapes.is_empty();
-    if !manual_mode {
+    if !manual_mode && !v3_enabled {
         let mut logging_suggestions = if report_model_mode == "adaptive_v2" {
             suggestions.clone()
         } else {
@@ -2235,15 +3178,20 @@ pub fn get_daily_pattern_decision_internal(
                             .cloned()
                             .unwrap_or_else(|| stat_key.clone()),
                         probability: normalized,
+                        joint_probability: normalized,
                         base_probability: *base_probs.get(&stat_key).unwrap_or(&0.0),
                         markov_probability: *markov_probs.get(&stat_key).unwrap_or(&0.0),
                         cycle_probability: *v2_components.auto_cycle_probs.get(&stat_key).unwrap_or(&0.0),
                         motif_boost: *raw_boost_map.get(&stat_key).unwrap_or(&0.0),
+                        best_tier_index: None,
+                        best_tier_probability: 0.0,
+                        tier_suggestions: Vec::new(),
                         confidence: 0.0,
                         probability_ci_low: 0.0,
                         probability_ci_high: 0.0,
                         matched_patterns: Vec::new(),
                         matched_experts: Vec::new(),
+                        state_matched_signals: Vec::new(),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -2258,12 +3206,14 @@ pub fn get_daily_pattern_decision_internal(
         logging_suggestions.truncate(top_k);
         persist_pattern_prediction_run(
             conn,
+            "adaptive_v2",
             &game_day,
             &seq,
             &blend_weights,
             &v2_components,
             &active_experts,
             &logging_suggestions,
+            None,
         )?;
     }
 
@@ -2275,13 +3225,15 @@ pub fn get_daily_pattern_decision_internal(
         max_len: max_len as i64,
         min_support,
         max_order: effective_max_order as i64,
-        model_confidence,
-        blend_weights,
-        backtest_summary: v2_model.backtest_summary.clone(),
-        active_experts,
+        model_confidence: report_model_confidence,
+        blend_weights: report_blend_weights,
+        backtest_summary: report_backtest_summary,
+        state_summary: report_state_summary,
+        shadow_comparison: report_shadow_comparison,
+        active_experts: report_active_experts,
         exact_patterns,
         shape_patterns,
-        suggestions,
+        suggestions: report_suggestions,
         manual_summary,
         notes,
     })
@@ -2303,6 +3255,7 @@ pub fn resolve_prediction_run_after_append(
     seq_len: i64,
     actual_event_id: &str,
     actual_stat_key: &str,
+    actual_tier_index: i64,
 ) -> Result<(), String> {
     let mut stmt = tx
         .prepare(
@@ -2343,15 +3296,17 @@ pub fn resolve_prediction_run_after_append(
             "UPDATE pattern_prediction_runs
              SET actual_stat_key = ?2,
                  actual_event_id = ?3,
-                 top1_hit = ?4,
-                 top3_hit = ?5,
-                 log_loss = ?6,
-                 resolved_at = ?7
+                 actual_tier_index = ?4,
+                 top1_hit = ?5,
+                 top3_hit = ?6,
+                 log_loss = ?7,
+                 resolved_at = ?8
              WHERE run_id = ?1",
             params![
                 run_id,
                 actual_stat_key,
                 actual_event_id,
+                actual_tier_index,
                 if top1_hit { 1 } else { 0 },
                 if top3_hit { 1 } else { 0 },
                 -actual_prob.ln(),
@@ -2372,6 +3327,7 @@ pub fn invalidate_unresolved_prediction_runs_for_game_day(
         "UPDATE pattern_prediction_runs
          SET actual_stat_key = '__invalid__',
              actual_event_id = NULL,
+             actual_tier_index = NULL,
              top1_hit = NULL,
              top3_hit = NULL,
              log_loss = NULL,

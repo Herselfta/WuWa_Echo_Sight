@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod domain;
+mod pattern_state;
 mod stats;
 
 use tauri::Manager;

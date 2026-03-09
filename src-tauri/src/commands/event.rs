@@ -187,6 +187,7 @@ pub fn append_ordered_event(
             pre_append_day_count,
             &event_id,
             &input.stat_key,
+            input.tier_index,
         )?;
     }
 

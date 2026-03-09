@@ -8,54 +8,8 @@ use crate::domain::types::{
     CategoryStreakReport, CategoryStreakRow, HypothesisFilter, ReversionBucket, ReversionReport,
     StatReversionSeries, TransitionCell, TransitionMatrix,
 };
+use crate::pattern_state::{infer_zone, stat_category};
 use crate::stats::expected_tier_adjacency_ratios_for_stat;
-
-/* ═══════════════════════════════════════════════════════
-Stat categories for zone hypothesis
-═══════════════════════════════════════════════════════ */
-
-const STAT_CATEGORIES: &[(&str, &str)] = &[
-    ("atk_flat", "atk"),
-    ("atk_pct", "atk"),
-    ("def_flat", "def"),
-    ("def_pct", "def"),
-    ("hp_flat", "hp"),
-    ("hp_pct", "hp"),
-    ("crit_rate", "crit"),
-    ("crit_dmg", "crit"),
-    ("energy_regen", "utility"),
-    ("basic_dmg", "dmg_bonus"),
-    ("heavy_dmg", "dmg_bonus"),
-    ("skill_dmg", "dmg_bonus"),
-    ("liberation_dmg", "dmg_bonus"),
-];
-
-fn stat_category(stat_key: &str) -> &'static str {
-    STAT_CATEGORIES
-        .iter()
-        .find(|(k, _)| *k == stat_key)
-        .map(|(_, c)| *c)
-        .unwrap_or("unknown")
-}
-
-/* ── Zone labels for the "区间" hypothesis ── */
-
-const ZONE_LABELS: &[(&str, &[&str])] = &[
-    ("攻防区", &["atk", "def"]),
-    ("攻生区", &["atk", "hp"]),
-    ("防生区", &["def", "hp"]),
-    ("伤害加成区", &["dmg_bonus"]),
-    ("共鸣区", &["dmg_bonus", "utility"]), // skill/liberation + energy_regen
-    ("爆区", &["crit"]),
-];
-
-fn infer_zone(category: &str) -> Vec<&'static str> {
-    ZONE_LABELS
-        .iter()
-        .filter(|(_, cats)| cats.contains(&category))
-        .map(|(label, _)| *label)
-        .collect()
-}
 
 /* ═══════════════════════════════════════════════════════
 Helper: load ordered event sequences grouped by echo

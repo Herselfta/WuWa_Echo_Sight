@@ -428,8 +428,8 @@ fn insert_rows_from_zip(
                 "INSERT INTO pattern_prediction_runs(
                     run_id, context_hash, game_day, seq_len, mode, weights_json,
                     predictions_json, context_json, actual_stat_key, actual_event_id,
-                    top1_hit, top3_hit, log_loss, resolved_at, created_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                    actual_tier_index, top1_hit, top3_hit, log_loss, resolved_at, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 rusqlite::params![
                     get_required(row, "run_id", "pattern_prediction_runs.csv")?,
                     get_required(row, "context_hash", "pattern_prediction_runs.csv")?,
@@ -441,6 +441,7 @@ fn insert_rows_from_zip(
                     get_required(row, "context_json", "pattern_prediction_runs.csv")?,
                     row.get("actual_stat_key").cloned().filter(|s| !s.is_empty()),
                     row.get("actual_event_id").cloned().filter(|s| !s.is_empty()),
+                    parse_optional_i64(row.get("actual_tier_index"), "actual_tier_index", "pattern_prediction_runs.csv")?,
                     parse_optional_i64(row.get("top1_hit"), "top1_hit", "pattern_prediction_runs.csv")?,
                     parse_optional_i64(row.get("top3_hit"), "top3_hit", "pattern_prediction_runs.csv")?,
                     parse_optional_f64(row.get("log_loss"), "log_loss", "pattern_prediction_runs.csv")?,
