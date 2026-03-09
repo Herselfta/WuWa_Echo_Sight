@@ -1018,13 +1018,15 @@ fn build_v2_components(
         "strong".to_string()
     };
 
+    let state_context_probs = base_probs.clone();
+
     V2ComponentBuild {
         base_probs,
         markov_probs,
         exact_motif_probs,
         approx_shape_probs,
         auto_cycle_probs,
-        state_context_probs: base_probs.clone(),
+        state_context_probs,
         markov_active: markov_max_order_hit > 0,
         exact_motif_active: exact_strength > 1e-9,
         approx_shape_active: approx_strength > 1e-9,
@@ -1524,10 +1526,10 @@ fn build_tier_distribution_for_stat(
         .iter()
         .map(|tier| (*tier, 0.0))
         .collect::<HashMap<_, _>>();
-    let mut base_weight = 0.45;
-    let mut transition_weight = if transition_enabled { 0.40 } else { 0.0 };
-    let mut state_weight = if last_tier.is_some() { 0.15 } else { 0.0 };
-    let total_weight = (base_weight + transition_weight + state_weight).max(1e-9);
+    let mut base_weight: f64 = 0.45;
+    let mut transition_weight: f64 = if transition_enabled { 0.40 } else { 0.0 };
+    let mut state_weight: f64 = if last_tier.is_some() { 0.15 } else { 0.0 };
+    let total_weight = (base_weight + transition_weight + state_weight).max(1e-9_f64);
     base_weight /= total_weight;
     transition_weight /= total_weight;
     state_weight /= total_weight;
@@ -1627,15 +1629,15 @@ fn run_walk_forward_backtest_v3(
     let mut global_tracker = V3ExpertTracker::default();
     let mut bucket_trackers = HashMap::<String, V3ExpertTracker>::new();
 
-    let mut top1_hits = 0.0;
-    let mut top3_hits = 0.0;
-    let mut true_prob_sum = 0.0;
-    let mut log_loss_sum = 0.0;
-    let mut joint_top1_hits = 0.0;
-    let mut joint_top3_hits = 0.0;
-    let mut true_joint_prob_sum = 0.0;
-    let mut joint_log_loss_sum = 0.0;
-    let mut sample_count = 0.0;
+    let mut top1_hits: f64 = 0.0;
+    let mut top3_hits: f64 = 0.0;
+    let mut true_prob_sum: f64 = 0.0;
+    let mut log_loss_sum: f64 = 0.0;
+    let mut joint_top1_hits: f64 = 0.0;
+    let mut joint_top3_hits: f64 = 0.0;
+    let mut true_joint_prob_sum: f64 = 0.0;
+    let mut joint_log_loss_sum: f64 = 0.0;
+    let mut sample_count: f64 = 0.0;
 
     for idx in start_idx..history.len() {
         let prefix_events = &history[..idx];
