@@ -46,9 +46,30 @@ pub struct SequenceStateFeatures {
     pub out_of_zone_streak: i64,
     pub crit_signal: String,
     pub tier_signal: String,
+    pub regime_stage: String,
+    pub regime_shift_score: f64,
+    pub dominant_category_recent4: String,
+    pub dominant_category_recent8: String,
+    pub current_category_run_len: i64,
     pub reversion_top_stats: Vec<String>,
     #[serde(skip)]
     pub reversion_score_by_stat: HashMap<String, f64>,
+}
+
+fn dominant_category(events: &[PatternEventLite]) -> (String, f64) {
+    if events.is_empty() {
+        return ("mixed".to_string(), 0.0);
+    }
+    let mut counts = HashMap::<String, i64>::new();
+    for event in events {
+        let category = stat_category(&event.stat_key).to_string();
+        *counts.entry(category).or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)))
+        .map(|(category, count)| (category, count as f64 / events.len() as f64))
+        .unwrap_or_else(|| ("mixed".to_string(), 0.0))
 }
 
 pub fn stat_category(stat_key: &str) -> &'static str {
@@ -185,6 +206,23 @@ pub fn compute_sequence_state_features(
         "none".to_string()
     };
 
+    let recent4 = if events.len() > 4 {
+        &events[events.len() - 4..]
+    } else {
+        events
+    };
+    let (dominant_category_recent4, dominant_share_recent4) = dominant_category(recent4);
+    let (dominant_category_recent8, dominant_share_recent8) = dominant_category(recent8);
+    let tail_category = events
+        .last()
+        .map(|event| stat_category(&event.stat_key).to_string())
+        .unwrap_or_else(|| "mixed".to_string());
+    let current_category_run_len = events
+        .iter()
+        .rev()
+        .take_while(|event| stat_category(&event.stat_key) == tail_category.as_str())
+        .count() as i64;
+
     let has_recent_extreme = events
         .iter()
         .rev()
@@ -231,6 +269,41 @@ pub fn compute_sequence_state_features(
             .then_with(|| a.0.cmp(&b.0))
     });
 
+    let active_delta = (active_stat_count_recent8 - active_stat_count_recent12).abs() as f64;
+    let dominant_shift = if dominant_category_recent4 != dominant_category_recent8
+        && dominant_share_recent4 >= 0.5
+    {
+        0.55
+    } else {
+        0.0
+    };
+    let concentration_delta = (dominant_share_recent4 - dominant_share_recent8).abs();
+    let run_boost = if current_category_run_len >= 3 {
+        0.22
+    } else if current_category_run_len == 2 {
+        0.10
+    } else {
+        0.0
+    };
+    let zone_break = if zone_candidate != "mixed" && out_of_zone_streak >= 2 {
+        0.25
+    } else {
+        0.0
+    };
+    let regime_shift_score = (dominant_shift
+        + concentration_delta * 0.7
+        + (active_delta / 4.0).min(1.0) * 0.25
+        + run_boost
+        + zone_break)
+        .clamp(0.0, 1.5);
+    let regime_stage = if regime_shift_score >= 0.85 {
+        "new_regime".to_string()
+    } else if regime_shift_score >= 0.42 {
+        "transitioning".to_string()
+    } else {
+        "stable".to_string()
+    };
+
     SequenceStateFeatures {
         active_stat_count_recent8,
         active_stat_count_recent12,
@@ -240,6 +313,11 @@ pub fn compute_sequence_state_features(
         out_of_zone_streak,
         crit_signal,
         tier_signal,
+        regime_stage,
+        regime_shift_score,
+        dominant_category_recent4,
+        dominant_category_recent8,
+        current_category_run_len,
         reversion_top_stats: reversion_top_stats
             .into_iter()
             .take(3)

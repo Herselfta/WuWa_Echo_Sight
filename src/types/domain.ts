@@ -214,6 +214,11 @@ export interface PatternStateSummary {
   outOfZoneStreak: number;
   critSignal: string;
   tierSignal: string;
+  regimeStage: string;
+  regimeShiftScore: number;
+  dominantCategoryRecent4: string;
+  dominantCategoryRecent8: string;
+  currentCategoryRunLen: number;
   reversionTopStats: string[];
 }
 

@@ -507,13 +507,18 @@ fn cap_base_weight(
     .into_iter()
     .filter(|(active, weight)| *active && *weight > 0.0)
     .collect::<Vec<_>>();
-    if non_base.len() < 2 || weights.base <= 0.35 {
+    let base_cap = match components.state_summary.regime_stage.as_str() {
+        "new_regime" => 0.22,
+        "transitioning" => 0.28,
+        _ => 0.35,
+    };
+    if non_base.len() < 2 || weights.base <= base_cap {
         return weights;
     }
 
-    let overflow = weights.base - 0.35;
+    let overflow = weights.base - base_cap;
     let total_non_base = non_base.iter().map(|(_, weight)| *weight).sum::<f64>();
-    weights.base = 0.35;
+    weights.base = base_cap;
     if total_non_base > 1e-9 {
         weights.markov += overflow * weights.markov / total_non_base;
         weights.exact_motif += overflow * weights.exact_motif / total_non_base;
@@ -560,6 +565,11 @@ fn public_state_summary(
         out_of_zone_streak: features.out_of_zone_streak,
         crit_signal: features.crit_signal.clone(),
         tier_signal: features.tier_signal.clone(),
+        regime_stage: features.regime_stage.clone(),
+        regime_shift_score: features.regime_shift_score,
+        dominant_category_recent4: features.dominant_category_recent4.clone(),
+        dominant_category_recent8: features.dominant_category_recent8.clone(),
+        current_category_run_len: features.current_category_run_len,
         reversion_top_stats: features.reversion_top_stats.clone(),
     }
 }
@@ -1053,6 +1063,11 @@ fn build_v2_components(
             out_of_zone_streak: 0,
             crit_signal: "none".to_string(),
             tier_signal: "n/a".to_string(),
+            regime_stage: "stable".to_string(),
+            regime_shift_score: 0.0,
+            dominant_category_recent4: "mixed".to_string(),
+            dominant_category_recent8: "mixed".to_string(),
+            current_category_run_len: 0,
             reversion_top_stats: Vec::new(),
             reversion_score_by_stat: HashMap::new(),
         },
@@ -1334,6 +1349,299 @@ fn load_day_event_sequence(
         .map_err(|e| format!("failed to collect day event sequence: {e}"))
 }
 
+fn build_short_local_context_probs(
+    events: &[crate::pattern_state::PatternEventLite],
+    stat_keys: &[String],
+    base_probs: &HashMap<String, f64>,
+) -> (
+    HashMap<String, f64>,
+    bool,
+    HashMap<String, Vec<String>>,
+) {
+    if events.is_empty() {
+        return (
+            base_probs.clone(),
+            false,
+            HashMap::<String, Vec<String>>::new(),
+        );
+    }
+
+    let recent = if events.len() > 6 {
+        &events[events.len() - 6..]
+    } else {
+        events
+    };
+    let mut stat_recent = HashMap::<String, f64>::new();
+    let mut category_recent = HashMap::<String, f64>::new();
+    for (idx, event) in recent.iter().enumerate() {
+        let weight = 1.0 + idx as f64 * 0.28;
+        *stat_recent.entry(event.stat_key.clone()).or_insert(0.0) += weight;
+        *category_recent
+            .entry(crate::pattern_state::stat_category(&event.stat_key).to_string())
+            .or_insert(0.0) += weight;
+    }
+    let stat_total = stat_recent.values().sum::<f64>().max(1e-9);
+    let category_total = category_recent.values().sum::<f64>().max(1e-9);
+
+    let mut category_base_totals = HashMap::<String, f64>::new();
+    for stat_key in stat_keys {
+        let category = crate::pattern_state::stat_category(stat_key).to_string();
+        *category_base_totals.entry(category).or_insert(0.0) +=
+            base_probs.get(stat_key).copied().unwrap_or(0.0);
+    }
+
+    let dominant_category = category_recent
+        .iter()
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
+        .map(|(category, weight)| (category.clone(), *weight / category_total))
+        .unwrap_or_else(|| ("mixed".to_string(), 0.0));
+
+    let mut probs = HashMap::<String, f64>::new();
+    let mut signals = HashMap::<String, Vec<String>>::new();
+    for stat_key in stat_keys {
+        let recent_stat_p = stat_recent.get(stat_key).copied().unwrap_or(0.0) / stat_total;
+        let category = crate::pattern_state::stat_category(stat_key).to_string();
+        let recent_category_p = category_recent.get(&category).copied().unwrap_or(0.0) / category_total;
+        let within_category = {
+            let base_mass = category_base_totals.get(&category).copied().unwrap_or(0.0);
+            if base_mass > 1e-9 {
+                base_probs.get(stat_key).copied().unwrap_or(0.0) / base_mass
+            } else {
+                0.0
+            }
+        };
+        let prob = 0.58 * recent_stat_p
+            + 0.32 * recent_category_p * within_category
+            + 0.10 * base_probs.get(stat_key).copied().unwrap_or(0.0);
+        probs.insert(stat_key.clone(), prob.max(1e-9));
+        if dominant_category.1 >= 0.52 && category == dominant_category.0 {
+            signals
+                .entry(stat_key.clone())
+                .or_default()
+                .push(format!("短窗集中 {} {:.0}%", category, dominant_category.1 * 100.0));
+        }
+    }
+    normalize_probability_map(&mut probs);
+    (probs, dominant_category.1 >= 0.52, signals)
+}
+
+fn build_day_category_context_probs(
+    events: &[crate::pattern_state::PatternEventLite],
+    stat_keys: &[String],
+    base_probs: &HashMap<String, f64>,
+    lookback: usize,
+) -> (
+    HashMap<String, f64>,
+    bool,
+    HashMap<String, Vec<String>>,
+) {
+    let focus_events = if events.len() > lookback {
+        &events[events.len() - lookback..]
+    } else {
+        events
+    };
+    let categories = focus_events
+        .iter()
+        .map(|event| crate::pattern_state::stat_category(&event.stat_key).to_string())
+        .collect::<Vec<_>>();
+    if categories.len() < 3 {
+        return (
+            base_probs.clone(),
+            false,
+            HashMap::<String, Vec<String>>::new(),
+        );
+    }
+
+    let unique_categories = categories.iter().cloned().collect::<HashSet<_>>();
+    let category_count = unique_categories.len().max(1) as f64;
+    let effective_max_order = (categories.len() - 1).min(3);
+    let mut category_scores = HashMap::<String, f64>::new();
+    let mut total_weight = 0.0;
+
+    for order in 1..=effective_max_order {
+        let context = &categories[categories.len() - order..];
+        let mut next_counts = HashMap::<String, i64>::new();
+        let mut sample_total = 0i64;
+        for idx in order..categories.len() {
+            if &categories[idx - order..idx] == context {
+                *next_counts.entry(categories[idx].clone()).or_insert(0) += 1;
+                sample_total += 1;
+            }
+        }
+        if sample_total <= 0 {
+            continue;
+        }
+        let confidence = sample_total as f64 / (sample_total as f64 + 1.8 * order as f64);
+        let weight = confidence * (order as f64).powf(1.35);
+        total_weight += weight;
+        for category in &unique_categories {
+            let count = *next_counts.get(category).unwrap_or(&0) as f64;
+            let p = (count + 0.35) / (sample_total as f64 + 0.35 * category_count);
+            *category_scores.entry(category.clone()).or_insert(0.0) += weight * p;
+        }
+    }
+
+    if total_weight <= 1e-9 {
+        return (
+            base_probs.clone(),
+            false,
+            HashMap::<String, Vec<String>>::new(),
+        );
+    }
+    for value in category_scores.values_mut() {
+        *value /= total_weight;
+    }
+
+    let mut category_base_totals = HashMap::<String, f64>::new();
+    let mut category_member_counts = HashMap::<String, usize>::new();
+    for stat_key in stat_keys {
+        let category = crate::pattern_state::stat_category(stat_key).to_string();
+        *category_base_totals.entry(category.clone()).or_insert(0.0) +=
+            base_probs.get(stat_key).copied().unwrap_or(0.0);
+        *category_member_counts.entry(category).or_insert(0) += 1;
+    }
+
+    let mut probs = HashMap::<String, f64>::new();
+    let mut signals = HashMap::<String, Vec<String>>::new();
+    for stat_key in stat_keys {
+        let category = crate::pattern_state::stat_category(stat_key).to_string();
+        let cat_prob = category_scores.get(&category).copied().unwrap_or(0.0);
+        let base_mass = category_base_totals.get(&category).copied().unwrap_or(0.0);
+        let member_count = category_member_counts.get(&category).copied().unwrap_or(1) as f64;
+        let within_category = if base_mass > 1e-9 {
+            base_probs.get(stat_key).copied().unwrap_or(0.0) / base_mass
+        } else {
+            1.0 / member_count
+        };
+        probs.insert(stat_key.clone(), (cat_prob * within_category).max(1e-9));
+        if cat_prob >= 0.28 {
+            signals
+                .entry(stat_key.clone())
+                .or_default()
+                .push(format!(
+                    "类别窗{} {} {:.0}%",
+                    lookback.min(events.len()),
+                    category,
+                    cat_prob * 100.0
+                ));
+        }
+    }
+    normalize_probability_map(&mut probs);
+    (
+        probs,
+        category_scores.values().copied().fold(0.0, f64::max) >= 0.34,
+        signals,
+    )
+}
+
+fn build_day_similarity_context_probs(
+    events: &[crate::pattern_state::PatternEventLite],
+    stat_keys: &[String],
+    base_probs: &HashMap<String, f64>,
+) -> (
+    HashMap<String, f64>,
+    bool,
+    HashMap<String, Vec<String>>,
+) {
+    let n = events.len();
+    if n < 6 {
+        return (
+            base_probs.clone(),
+            false,
+            HashMap::<String, Vec<String>>::new(),
+        );
+    }
+    let window_len = n.min(5);
+    let current_window = &events[n - window_len..];
+    let current_active = events[n.saturating_sub(6)..]
+        .iter()
+        .map(|event| event.stat_key.as_str())
+        .collect::<HashSet<_>>()
+        .len() as i64;
+    let current_run_category = crate::pattern_state::stat_category(&events[n - 1].stat_key);
+    let current_run_len = events
+        .iter()
+        .rev()
+        .take_while(|event| crate::pattern_state::stat_category(&event.stat_key) == current_run_category)
+        .count() as i64;
+
+    let mut stat_scores = stat_keys
+        .iter()
+        .map(|stat_key| (stat_key.clone(), 0.0))
+        .collect::<HashMap<_, _>>();
+    let mut matched_contexts = 0i64;
+
+    for next_idx in window_len..n {
+        let hist_window = &events[next_idx - window_len..next_idx];
+        let hist_active = events[next_idx.saturating_sub(6)..next_idx]
+            .iter()
+            .map(|event| event.stat_key.as_str())
+            .collect::<HashSet<_>>()
+            .len() as i64;
+        let hist_run_category = crate::pattern_state::stat_category(&hist_window[window_len - 1].stat_key);
+        let hist_run_len = hist_window
+            .iter()
+            .rev()
+            .take_while(|event| crate::pattern_state::stat_category(&event.stat_key) == hist_run_category)
+            .count() as i64;
+
+        let mut similarity = 0.0;
+        for idx in 0..window_len {
+            let pos_weight = 1.0 + idx as f64 * 0.28;
+            let cur_category = crate::pattern_state::stat_category(&current_window[idx].stat_key);
+            let hist_category = crate::pattern_state::stat_category(&hist_window[idx].stat_key);
+            if cur_category == hist_category {
+                similarity += pos_weight * 1.15;
+            }
+            if current_window[idx].stat_key == hist_window[idx].stat_key {
+                similarity += pos_weight * 0.45;
+            }
+        }
+        let active_diff = (current_active - hist_active).abs() as f64;
+        similarity += (1.3 - active_diff * 0.30).max(0.0);
+        let run_diff = (current_run_len - hist_run_len).abs() as f64;
+        similarity += (1.2 - run_diff * 0.35).max(0.0);
+        if current_run_category == hist_run_category {
+            similarity += 0.9;
+        }
+
+        if similarity < 4.0 {
+            continue;
+        }
+        matched_contexts += 1;
+        let recency = 0.78 + 0.22 * (next_idx as f64 / n as f64);
+        let weight = (similarity - 3.6).powf(1.28) * recency;
+        if let Some(score) = stat_scores.get_mut(&events[next_idx].stat_key) {
+            *score += weight;
+        }
+    }
+
+    let total_score = stat_scores.values().sum::<f64>();
+    if total_score <= 1e-9 {
+        return (
+            base_probs.clone(),
+            false,
+            HashMap::<String, Vec<String>>::new(),
+        );
+    }
+
+    let mut probs = HashMap::<String, f64>::new();
+    let mut signals = HashMap::<String, Vec<String>>::new();
+    for stat_key in stat_keys {
+        let local = stat_scores.get(stat_key).copied().unwrap_or(0.0) / total_score;
+        let blended = 0.85 * local + 0.15 * base_probs.get(stat_key).copied().unwrap_or(0.0);
+        probs.insert(stat_key.clone(), blended.max(1e-9));
+        if local >= 0.22 {
+            signals
+                .entry(stat_key.clone())
+                .or_default()
+                .push(format!("日内相似窗口 {} 例", matched_contexts));
+        }
+    }
+    normalize_probability_map(&mut probs);
+    (probs, matched_contexts >= 2, signals)
+}
+
 fn build_state_context_expert(
     events: &[crate::pattern_state::PatternEventLite],
     stat_keys: &[String],
@@ -1348,7 +1656,7 @@ fn build_state_context_expert(
     crate::pattern_state::SequenceStateFeatures,
 ) {
     let summary = crate::pattern_state::compute_sequence_state_features(events, stat_keys);
-    let mut probs = HashMap::new();
+    let mut zone_reversion_probs = HashMap::new();
     let mut labels = HashMap::<String, Vec<String>>::new();
     let mut sources = HashMap::<String, Vec<String>>::new();
     let mut state_signals = HashMap::<String, Vec<String>>::new();
@@ -1387,8 +1695,83 @@ fn build_state_context_expert(
             signals.push("低活跃暴区门控".to_string());
         }
 
-        probs.insert(stat_key.clone(), (base * multiplier).max(1e-9));
+        zone_reversion_probs.insert(stat_key.clone(), (base * multiplier).max(1e-9));
+        if !signals.is_empty() {
+            state_signals.insert(stat_key.clone(), signals);
+        }
+    }
+    normalize_probability_map(&mut zone_reversion_probs);
 
+    let (short_local_probs, short_local_active, short_local_signals) =
+        build_short_local_context_probs(events, stat_keys, base_probs);
+    let (short_category_probs, short_category_active, short_category_signals) =
+        build_day_category_context_probs(events, stat_keys, base_probs, 12);
+    let (medium_category_probs, medium_category_active, medium_category_signals) =
+        build_day_category_context_probs(events, stat_keys, base_probs, 24);
+    let (similarity_probs, similarity_active, similarity_signals) =
+        build_day_similarity_context_probs(events, stat_keys, base_probs);
+
+    let (mut zone_weight, mut short_local_weight, mut short_category_weight, mut medium_category_weight, mut similarity_weight) =
+        match summary.regime_stage.as_str() {
+            "new_regime" => (0.20, 0.40, 0.10, 0.10, 0.20),
+            "transitioning" => (0.15, 0.32, 0.18, 0.15, 0.20),
+            _ => (0.15, 0.15, 0.22, 0.23, 0.25),
+        };
+    if !short_local_active {
+        short_local_weight = 0.0;
+    }
+    if !short_category_active {
+        short_category_weight = 0.0;
+    }
+    if !medium_category_active {
+        medium_category_weight = 0.0;
+    }
+    if !similarity_active {
+        similarity_weight = 0.0;
+    }
+    if short_local_weight + short_category_weight + medium_category_weight + similarity_weight <= 1e-9 {
+        zone_weight = 1.0;
+    }
+    let total_weight = (zone_weight
+        + short_local_weight
+        + short_category_weight
+        + medium_category_weight
+        + similarity_weight)
+        .max(1e-9_f64);
+    zone_weight /= total_weight;
+    short_local_weight /= total_weight;
+    short_category_weight /= total_weight;
+    medium_category_weight /= total_weight;
+    similarity_weight /= total_weight;
+
+    let mut probs = HashMap::new();
+    for stat_key in stat_keys {
+        probs.insert(
+            stat_key.clone(),
+            zone_weight * zone_reversion_probs.get(stat_key).copied().unwrap_or(0.0)
+                + short_local_weight * short_local_probs.get(stat_key).copied().unwrap_or(0.0)
+                + short_category_weight * short_category_probs.get(stat_key).copied().unwrap_or(0.0)
+                + medium_category_weight * medium_category_probs.get(stat_key).copied().unwrap_or(0.0)
+                + similarity_weight * similarity_probs.get(stat_key).copied().unwrap_or(0.0),
+        );
+    }
+    normalize_probability_map(&mut probs);
+
+    for stat_key in stat_keys {
+        let mut signals = state_signals.remove(stat_key).unwrap_or_default();
+        signals.extend(short_local_signals.get(stat_key).cloned().unwrap_or_default());
+        signals.extend(short_category_signals.get(stat_key).cloned().unwrap_or_default());
+        signals.extend(medium_category_signals.get(stat_key).cloned().unwrap_or_default());
+        signals.extend(similarity_signals.get(stat_key).cloned().unwrap_or_default());
+        if summary.regime_stage != "stable" {
+            signals.push(format!(
+                "机制 {} {:.2}",
+                summary.regime_stage,
+                summary.regime_shift_score
+            ));
+        }
+        signals.sort();
+        signals.dedup();
         if !signals.is_empty() {
             let display_name = stat_display_name(display_map, stat_key);
             labels.insert(
@@ -1400,8 +1783,11 @@ fn build_state_context_expert(
         }
     }
 
-    normalize_probability_map(&mut probs);
-    let active = summary.zone_confidence >= 0.35
+    let active = short_local_active
+        || short_category_active
+        || medium_category_active
+        || similarity_active
+        || summary.zone_confidence >= 0.35
         || summary.crit_signal != "none"
         || summary
             .reversion_score_by_stat
@@ -2092,11 +2478,19 @@ pub fn get_daily_pattern_decision_internal(
     let alpha = get_setting_f64(conn, "smoothing_alpha", 1.0).max(1e-9);
     let confidence_level = get_setting_f64(conn, "confidence_level", 0.95).clamp(0.5, 0.999);
     let motif_lambda = 1.15f64;
-    let deployment_mode = get_setting_string(conn, "pattern_model_mode", "adaptive_v2");
+    let deployment_mode = match get_setting_string(conn, "pattern_model_mode", "adaptive_v3").as_str() {
+        "baseline_v1" => "baseline_v1".to_string(),
+        "adaptive_v3_shadow" => "adaptive_v3_shadow".to_string(),
+        "adaptive_v3" => "adaptive_v3".to_string(),
+        _ => "adaptive_v3".to_string(),
+    };
     let v3_enabled = matches!(deployment_mode.as_str(), "adaptive_v3" | "adaptive_v3_shadow");
     let bucket_min_samples = get_setting_i64(conn, "pattern_bucket_min_samples", 12).clamp(4, 64)
         as usize;
-    let mut notes = vec!["当前模型按全局序列建模，不区分 Cost/主词条/状态。".to_string()];
+    let mut notes = vec![
+        "当前模型按全局序列建模，并叠加日内类别上下文与相似窗口检索；不区分 Cost/主词条/状态。"
+            .to_string(),
+    ];
 
     let min_len = filter.min_len.unwrap_or(3).clamp(2, 12) as usize;
     let max_len = filter.max_len.unwrap_or(7).clamp(min_len as i64, 16) as usize;

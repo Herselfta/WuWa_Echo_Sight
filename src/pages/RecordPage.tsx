@@ -2092,6 +2092,11 @@ export function RecordPage() {
                       <span className="record-pattern-chip">active12 {patternDecision.stateSummary.activeStatCountRecent12}</span>
                       <span className="record-pattern-chip">crit {patternDecision.stateSummary.critSignal}</span>
                       <span className="record-pattern-chip">tier {patternDecision.stateSummary.tierSignal}</span>
+                      <span className="record-pattern-chip">regime {patternDecision.stateSummary.regimeStage}</span>
+                      <span className="record-pattern-chip">shift {patternDecision.stateSummary.regimeShiftScore.toFixed(2)}</span>
+                      <span className="record-pattern-chip">cat4 {patternDecision.stateSummary.dominantCategoryRecent4}</span>
+                      <span className="record-pattern-chip">cat8 {patternDecision.stateSummary.dominantCategoryRecent8}</span>
+                      <span className="record-pattern-chip">run {patternDecision.stateSummary.currentCategoryRunLen}</span>
                       <span className="record-pattern-chip">outZone {patternDecision.stateSummary.outOfZoneStreak}</span>
                     </div>
                     {patternDecision.stateSummary.reversionTopStats.length > 0 ? (

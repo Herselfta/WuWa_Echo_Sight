@@ -435,6 +435,11 @@ pub struct PatternStateSummary {
     pub out_of_zone_streak: i64,
     pub crit_signal: String,
     pub tier_signal: String,
+    pub regime_stage: String,
+    pub regime_shift_score: f64,
+    pub dominant_category_recent4: String,
+    pub dominant_category_recent8: String,
+    pub current_category_run_len: i64,
     pub reversion_top_stats: Vec<String>,
 }
 
