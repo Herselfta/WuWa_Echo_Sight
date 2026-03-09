@@ -228,6 +228,28 @@ fn parse_i64(value: &str, key: &str, table: &str) -> Result<i64, String> {
         .map_err(|e| format!("invalid i64 for {key} in {table}: {e}"))
 }
 
+fn parse_optional_i64(value: Option<&String>, key: &str, table: &str) -> Result<Option<i64>, String> {
+    value
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| parse_i64(v, key, table))
+        .transpose()
+}
+
+fn parse_f64(value: &str, key: &str, table: &str) -> Result<f64, String> {
+    value
+        .parse::<f64>()
+        .map_err(|e| format!("invalid f64 for {key} in {table}: {e}"))
+}
+
+fn parse_optional_f64(value: Option<&String>, key: &str, table: &str) -> Result<Option<f64>, String> {
+    value
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| parse_f64(v, key, table))
+        .transpose()
+}
+
 fn insert_rows_from_zip(
     conn: &mut Connection,
     archive: &mut ZipArchive<File>,
@@ -419,9 +441,9 @@ fn insert_rows_from_zip(
                     get_required(row, "context_json", "pattern_prediction_runs.csv")?,
                     row.get("actual_stat_key").cloned().filter(|s| !s.is_empty()),
                     row.get("actual_event_id").cloned().filter(|s| !s.is_empty()),
-                    row.get("top1_hit").map(|v| parse_i64(v, "top1_hit", "pattern_prediction_runs.csv")).transpose()?,
-                    row.get("top3_hit").map(|v| parse_i64(v, "top3_hit", "pattern_prediction_runs.csv")).transpose()?,
-                    row.get("log_loss").and_then(|v| if v.is_empty() { None } else { v.parse::<f64>().ok() }),
+                    parse_optional_i64(row.get("top1_hit"), "top1_hit", "pattern_prediction_runs.csv")?,
+                    parse_optional_i64(row.get("top3_hit"), "top3_hit", "pattern_prediction_runs.csv")?,
+                    parse_optional_f64(row.get("log_loss"), "log_loss", "pattern_prediction_runs.csv")?,
                     row.get("resolved_at").cloned().filter(|s| !s.is_empty()),
                     get_required(row, "created_at", "pattern_prediction_runs.csv")?,
                 ],
