@@ -8,6 +8,7 @@ import {
   getGlobalDistribution,
   saveExpectationPreset,
   setExpectations,
+  updateEcho,
   upsertBackfillState,
 } from "../api/tauri";
 import { BarChart } from "../components/BarChart";
@@ -196,6 +197,14 @@ const STATUS_BADGE_CLASS: Record<EchoStatus, string> = {
   abandoned: "badge-abandoned",
   completed: "badge-completed",
 };
+
+function canToggleTrackingStatus(status: EchoStatus): status is "tracking" | "paused" {
+  return status === "tracking" || status === "paused";
+}
+
+function getTrackingToggleLabel(status: "tracking" | "paused"): string {
+  return status === "tracking" ? "暂停追踪" : "恢复追踪";
+}
 
 const STAT_ABBR_MAP: Record<string, string> = {
   crit_rate: "b",
@@ -801,6 +810,34 @@ export function RecordPage() {
       await deleteOrderedEvent({ eventId });
       await Promise.all([refreshEchoes(), loadHistory(), loadDistribution(), loadPatternDecision()]);
       showMsg("已撤销最近一次录入。", "success");
+    } catch (error) {
+      showMsg(String(error), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleSelectedEchoTracking = async () => {
+    if (!selectedEcho) {
+      showMsg("请先选择声骸。");
+      return;
+    }
+    if (!canToggleTrackingStatus(selectedEcho.status)) {
+      showMsg("当前状态请前往声骸池管理中修改。");
+      return;
+    }
+
+    const nextStatus: EchoStatus = selectedEcho.status === "tracking" ? "paused" : "tracking";
+
+    setSaving(true);
+    showMsg("");
+    try {
+      await updateEcho({
+        echoId: selectedEcho.echoId,
+        status: nextStatus,
+      });
+      await Promise.all([refreshEchoes(), loadDistribution()]);
+      showMsg(nextStatus === "tracking" ? "已恢复追踪。" : "已暂停追踪。", "success");
     } catch (error) {
       showMsg(String(error), "error");
     } finally {
@@ -1437,6 +1474,17 @@ export function RecordPage() {
                     <span className={`record-badge ${STATUS_BADGE_CLASS[selectedEcho.status]}`}>
                       {STATUS_LABELS[selectedEcho.status]}
                     </span>
+                    {canToggleTrackingStatus(selectedEcho.status) ? (
+                      <button
+                        type="button"
+                        className="record-badge record-badge-button"
+                        onClick={() => void handleToggleSelectedEchoTracking()}
+                        disabled={saving}
+                        title={`点击${getTrackingToggleLabel(selectedEcho.status)}`}
+                      >
+                        {getTrackingToggleLabel(selectedEcho.status)}
+                      </button>
+                    ) : null}
                     <span className="record-badge badge-neutral">
                       Cost {selectedEcho.costClass}
                     </span>
