@@ -1583,25 +1583,80 @@ button:hover {
   white-space: nowrap;
 }
 
-.record-badge-button {
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #334155;
-  cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+.record-status-inline {
+  position: relative;
+  display: inline-flex;
 }
 
-.record-badge-button:hover:not(:disabled) {
-  border-color: #94a3b8;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+.record-status-trigger {
+  border: none;
+  cursor: pointer;
+  gap: 4px;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+}
+
+.record-status-trigger:hover:not(:disabled),
+.record-status-trigger-active {
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
   transform: translateY(-1px);
 }
 
-.record-badge-button:disabled {
+.record-status-trigger:disabled {
   opacity: 0.65;
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+.record-status-caret {
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.record-status-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: var(--z-popup);
+  min-width: 160px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.record-status-option {
+  width: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.record-status-option:hover:not(:disabled),
+.record-status-option.is-active {
+  background: #f8fafc;
+}
+
+.record-status-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.record-status-option-meta {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .badge-tracking {

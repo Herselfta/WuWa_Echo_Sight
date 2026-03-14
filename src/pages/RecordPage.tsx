@@ -198,13 +198,7 @@ const STATUS_BADGE_CLASS: Record<EchoStatus, string> = {
   completed: "badge-completed",
 };
 
-function canToggleTrackingStatus(status: EchoStatus): status is "tracking" | "paused" {
-  return status === "tracking" || status === "paused";
-}
-
-function getTrackingToggleLabel(status: "tracking" | "paused"): string {
-  return status === "tracking" ? "暂停追踪" : "恢复追踪";
-}
+const STATUS_OPTIONS = Object.keys(STATUS_LABELS) as EchoStatus[];
 
 const STAT_ABBR_MAP: Record<string, string> = {
   crit_rate: "b",
@@ -296,6 +290,9 @@ export function RecordPage() {
   const [historyDatePopoverOpen, setHistoryDatePopoverOpen] = useState(false);
   const [historyDateAnchorIdx, setHistoryDateAnchorIdx] = useState<number | null>(null);
   const historyDateFilterRef = useRef<HTMLDivElement | null>(null);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const statusMenuRef = useRef<HTMLDivElement | null>(null);
+  const statusTriggerRef = useRef<HTMLButtonElement | null>(null);
   
   const { recordPageDraft, patchRecordPageDraft } = useAppStore();
   const { historyLimitStr, historySelectedGameDay } = recordPageDraft;
@@ -452,6 +449,29 @@ export function RecordPage() {
       window.removeEventListener("keydown", handleEsc);
     };
   }, [historyDatePopoverOpen]);
+
+  useEffect(() => {
+    if (!statusMenuOpen) return;
+    const handler = (e: PointerEvent) => {
+      if (!(e.target instanceof Node)) return;
+      if (statusTriggerRef.current?.contains(e.target)) return;
+      if (statusMenuRef.current?.contains(e.target)) return;
+      setStatusMenuOpen(false);
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setStatusMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", handler);
+    window.addEventListener("keydown", handleEsc);
+    return () => {
+      window.removeEventListener("pointerdown", handler);
+      window.removeEventListener("keydown", handleEsc);
+    };
+  }, [statusMenuOpen]);
+
+  useEffect(() => {
+    setStatusMenuOpen(false);
+  }, [selectedEchoId]);
 
   // auto-focus naming input & track position
   useEffect(() => {
@@ -817,18 +837,18 @@ export function RecordPage() {
     }
   };
 
-  const handleToggleSelectedEchoTracking = async () => {
+  const handleSelectedEchoStatusChange = async (nextStatus: EchoStatus) => {
     if (!selectedEcho) {
       showMsg("请先选择声骸。");
       return;
     }
-    if (!canToggleTrackingStatus(selectedEcho.status)) {
-      showMsg("当前状态请前往声骸池管理中修改。");
+
+    if (selectedEcho.status === nextStatus) {
+      setStatusMenuOpen(false);
       return;
     }
 
-    const nextStatus: EchoStatus = selectedEcho.status === "tracking" ? "paused" : "tracking";
-
+    setStatusMenuOpen(false);
     setSaving(true);
     showMsg("");
     try {
@@ -837,7 +857,7 @@ export function RecordPage() {
         status: nextStatus,
       });
       await Promise.all([refreshEchoes(), loadDistribution()]);
-      showMsg(nextStatus === "tracking" ? "已恢复追踪。" : "已暂停追踪。", "success");
+      showMsg(`状态已更新为「${STATUS_LABELS[nextStatus]}」。`, "success");
     } catch (error) {
       showMsg(String(error), "error");
     } finally {
@@ -1471,20 +1491,49 @@ export function RecordPage() {
                 </select>
                 {selectedEcho ? (
                   <>
-                    <span className={`record-badge ${STATUS_BADGE_CLASS[selectedEcho.status]}`}>
-                      {STATUS_LABELS[selectedEcho.status]}
-                    </span>
-                    {canToggleTrackingStatus(selectedEcho.status) ? (
+                    <div className="record-status-inline">
                       <button
                         type="button"
-                        className="record-badge record-badge-button"
-                        onClick={() => void handleToggleSelectedEchoTracking()}
+                        ref={statusTriggerRef}
+                        className={`record-badge ${STATUS_BADGE_CLASS[selectedEcho.status]} record-status-trigger ${statusMenuOpen ? "record-status-trigger-active" : ""}`}
+                        onClick={() => setStatusMenuOpen((open) => !open)}
                         disabled={saving}
-                        title={`点击${getTrackingToggleLabel(selectedEcho.status)}`}
+                        aria-haspopup="listbox"
+                        aria-expanded={statusMenuOpen}
+                        title="点击切换状态"
                       >
-                        {getTrackingToggleLabel(selectedEcho.status)}
+                        <span>{STATUS_LABELS[selectedEcho.status]}</span>
+                        <span className="record-status-caret" aria-hidden="true">▾</span>
                       </button>
-                    ) : null}
+                      {statusMenuOpen ? (
+                        <div
+                          ref={statusMenuRef}
+                          className="record-status-menu"
+                          role="listbox"
+                          aria-label="选择声骸状态"
+                        >
+                          {STATUS_OPTIONS.map((status) => {
+                            const isActive = status === selectedEcho.status;
+                            return (
+                              <button
+                                key={status}
+                                type="button"
+                                className={`record-status-option ${isActive ? "is-active" : ""}`}
+                                role="option"
+                                aria-selected={isActive}
+                                onClick={() => void handleSelectedEchoStatusChange(status)}
+                                disabled={saving}
+                              >
+                                <span>{STATUS_LABELS[status]}</span>
+                                <span className="record-status-option-meta">
+                                  {isActive ? "当前" : status}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
                     <span className="record-badge badge-neutral">
                       Cost {selectedEcho.costClass}
                     </span>
