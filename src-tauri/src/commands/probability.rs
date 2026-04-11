@@ -91,7 +91,11 @@ fn load_event_counts(
 fn list_stats(conn: &Connection) -> Result<Vec<(String, String, String)>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT stat_key, display_name, unit FROM stat_defs WHERE enabled = 1 ORDER BY rowid",
+            "SELECT sd.stat_key, sd.display_name, sd.unit 
+             FROM stat_defs sd
+             WHERE sd.enabled = 1 
+             AND EXISTS (SELECT 1 FROM stat_tiers st WHERE st.stat_key = sd.stat_key)
+             ORDER BY sd.rowid",
         )
         .map_err(|e| format!("failed to query stat_defs: {e}"))?;
     let rows = stmt

@@ -1094,8 +1094,8 @@ export function EchoPoolPage() {
   };
 
   const pickAvailableStat = (used: string[]) => {
-    const found = statDefs.find((s) => !used.includes(s.statKey));
-    return found?.statKey ?? statDefs[0]?.statKey ?? "crit_rate";
+    const found = statDefs.find((s) => s.isSubstat && !used.includes(s.statKey));
+    return found?.statKey ?? statDefs.find(s => s.isSubstat)?.statKey ?? "crit_rate";
   };
 
   const addExpectation = () => {
@@ -1610,7 +1610,7 @@ export function EchoPoolPage() {
                             if (selected) classNames.push("active");
                             if (isDraggingThis) classNames.push("dragging");
                             const availableStats = statDefs.filter(
-                              (x) => x.statKey === statKey || !presetDraftStats.includes(x.statKey),
+                              (x) => x.isSubstat && (x.statKey === statKey || !presetDraftStats.includes(x.statKey)),
                             );
                             const hideOperator =
                               draggingPresetFromIndex !== null && idx === draggingPresetFromIndex;
@@ -2094,7 +2094,7 @@ export function EchoPoolPage() {
                     </button>
                   </div>
                   <div className="echo-substat-chip-list">
-                    {statDefs.map((stat) => {
+                    {statDefs.filter(s => s.isSubstat).map((stat) => {
                       const selected = echoFilters.substatStatKeys.includes(stat.statKey);
                       return (
                         <div
@@ -2585,7 +2585,7 @@ export function EchoPoolPage() {
                                 if (isDraggingThis) classNames.push("dragging");
 
                                 const availableStats = statDefs.filter(
-                                  (x) => x.statKey === statKey || !expectationStats.includes(x.statKey),
+                                  (x) => x.isSubstat && (x.statKey === statKey || !expectationStats.includes(x.statKey)),
                                 );
                                 const hideOperator =
                                   draggingExpectationFromIndex !== null && idx === draggingExpectationFromIndex;
@@ -2739,8 +2739,9 @@ export function EchoPoolPage() {
                                 const currentUsed = slotsDraft.map((x) => x.statKey);
                                 const availableStats = statDefs.filter(
                                   (x) =>
+                                    x.isSubstat && (
                                     x.statKey === slot.statKey ||
-                                    (!currentUsed.includes(x.statKey) && !editingOrderedStatSet.has(x.statKey)),
+                                    (!currentUsed.includes(x.statKey) && !editingOrderedStatSet.has(x.statKey))),
                                 );
                                 const tiers = statMap.get(slot.statKey)?.tiers ?? [];
                                 const previewSlotNo = slotNo;

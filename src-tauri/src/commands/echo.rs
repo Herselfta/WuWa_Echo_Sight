@@ -76,11 +76,13 @@ pub fn list_stat_defs(state: State<'_, AppState>) -> Result<Vec<StatDef>, String
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("tier collect error: {e}"))?;
 
+        let is_substat = !tiers.is_empty();
         result.push(StatDef {
             stat_key,
             display_name,
             unit,
             tiers,
+            is_substat,
         });
     }
 

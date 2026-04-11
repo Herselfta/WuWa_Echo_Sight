@@ -106,7 +106,14 @@ INSERT OR IGNORE INTO stat_defs(stat_key, display_name, unit, enabled) VALUES
   ('def_pct', '防御力%', 'percent', 1),
   ('hp_flat', '固定生命', 'flat', 1),
   ('atk_flat', '固定攻击', 'flat', 1),
-  ('def_flat', '固定防御', 'flat', 1);
+  ('def_flat', '固定防御', 'flat', 1),
+  ('glacio_dmg', '冷凝伤害加成', 'percent', 1),
+  ('fusion_dmg', '热熔伤害加成', 'percent', 1),
+  ('electro_dmg', '导电伤害加成', 'percent', 1),
+  ('aero_dmg', '气动伤害加成', 'percent', 1),
+  ('spectro_dmg', '衍射伤害加成', 'percent', 1),
+  ('havoc_dmg', '湮灭伤害加成', 'percent', 1),
+  ('healing_bonus', '治疗效果加成', 'percent', 1);
 
 INSERT OR IGNORE INTO stat_tiers(stat_key, tier_index, value_scaled) VALUES
   ('crit_rate', 1, 105), ('crit_rate', 2, 99), ('crit_rate', 3, 93), ('crit_rate', 4, 87), ('crit_rate', 5, 81), ('crit_rate', 6, 75), ('crit_rate', 7, 69), ('crit_rate', 8, 63),

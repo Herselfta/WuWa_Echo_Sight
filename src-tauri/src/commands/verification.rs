@@ -103,7 +103,7 @@ fn load_echo_sequences(
 
 fn list_stat_keys(conn: &Connection) -> Result<Vec<(String, String)>, String> {
     let mut stmt = conn
-        .prepare("SELECT stat_key, display_name FROM stat_defs WHERE enabled = 1 ORDER BY rowid")
+        .prepare("SELECT stat_key, display_name FROM stat_defs WHERE enabled = 1 AND stat_key IN (SELECT DISTINCT stat_key FROM stat_tiers) ORDER BY rowid")
         .map_err(|e| format!("failed to query stat_defs: {e}"))?;
     let rows = stmt
         .query_map([], |row| {

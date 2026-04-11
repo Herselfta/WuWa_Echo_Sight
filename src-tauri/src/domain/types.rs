@@ -14,6 +14,7 @@ pub struct StatDef {
     pub display_name: String,
     pub unit: String,
     pub tiers: Vec<StatTier>,
+    pub is_substat: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

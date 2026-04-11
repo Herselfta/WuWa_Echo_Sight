@@ -10,6 +10,7 @@ export interface StatDef {
   displayName: string;
   unit: "percent" | "flat";
   tiers: StatTier[];
+  isSubstat: boolean;
 }
 
 export interface ExpectationItem {

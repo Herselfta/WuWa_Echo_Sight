@@ -214,6 +214,13 @@ const STAT_ABBR_MAP: Record<string, string> = {
   atk_pct: "A",
   hp_pct: "H",
   def_pct: "D",
+  glacio_dmg: "g",
+  fusion_dmg: "f",
+  electro_dmg: "l",
+  aero_dmg: "w",
+  spectro_dmg: "p",
+  havoc_dmg: "v",
+  healing_bonus: "m",
 };
 
 function statKeyToAbbr(statKey: string): string {
@@ -225,7 +232,7 @@ function getStatColorClass(statKey: string): string {
   if (["crit_rate", "crit_dmg"].includes(statKey)) return "record-history-abbr-red";
   if (statKey === "energy_regen") return "record-history-abbr-regen";
   if (["atk_pct", "atk_flat"].includes(statKey)) return "record-history-abbr-atk";
-  if (["basic_dmg", "heavy_dmg", "skill_dmg", "liberation_dmg"].includes(statKey)) return "record-history-abbr-blue";
+  if (["basic_dmg", "heavy_dmg", "skill_dmg", "liberation_dmg", "glacio_dmg", "fusion_dmg", "electro_dmg", "aero_dmg", "spectro_dmg", "havoc_dmg", "healing_bonus"].includes(statKey)) return "record-history-abbr-blue";
   return "record-history-abbr-blue"; // default
 }
 
@@ -359,7 +366,7 @@ export function RecordPage() {
   const nextSlotNo = availableSlots[0] ?? 1;
 
   const availableStatDefs = useMemo(
-    () => statDefs.filter((s) => !occupiedStats.has(s.statKey)),
+    () => statDefs.filter((s) => s.isSubstat && !occupiedStats.has(s.statKey)),
     [statDefs, occupiedStats],
   );
 
@@ -617,8 +624,8 @@ export function RecordPage() {
   /* ── chain helpers for create form ─── */
 
   const pickAvailableStat = (used: string[]) => {
-    const found = statDefs.find((s) => !used.includes(s.statKey));
-    return found?.statKey ?? statDefs[0]?.statKey ?? "crit_rate";
+    const found = statDefs.find((s) => s.isSubstat && !used.includes(s.statKey));
+    return found?.statKey ?? statDefs.find(s => s.isSubstat)?.statKey ?? "crit_rate";
   };
 
   const addCreateExp = () => {
@@ -882,7 +889,7 @@ export function RecordPage() {
       {stats.map((sk, idx) => {
         const stat = statMap.get(sk);
         const selected = activeIdx === idx;
-        const availStats = statDefs.filter((x) => x.statKey === sk || !stats.includes(x.statKey));
+        const availStats = statDefs.filter((x) => x.isSubstat && (x.statKey === sk || !stats.includes(x.statKey)));
 
         const hideOperator = draggingExpFromIndex !== null && idx === draggingExpFromIndex;
         const isDraggingThis = draggingExpFromIndex === idx;
@@ -987,7 +994,7 @@ export function RecordPage() {
 
         const currentUsed = slots.map((x) => x.statKey);
         const availStats = statDefs.filter(
-          (x) => x.statKey === slot.statKey || !currentUsed.includes(x.statKey),
+          (x) => x.isSubstat && (x.statKey === slot.statKey || !currentUsed.includes(x.statKey)),
         );
         const tiers = statMap.get(slot.statKey)?.tiers ?? [];
 
@@ -1657,7 +1664,7 @@ export function RecordPage() {
                             onBlur={() => setSearchActiveIdx(null)}
                             onPointerDown={(e) => e.stopPropagation()}
                           >
-                            {statDefs.map(s => (
+                            {statDefs.filter(s => s.isSubstat).map(s => (
                               <option key={s.statKey} value={s.statKey}>{s.displayName}</option>
                             ))}
                           </select>
@@ -1676,7 +1683,7 @@ export function RecordPage() {
                     style={{ height: 20, width: 20, minWidth: 20 }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      const firstAvail = statDefs[0].statKey;
+                      const firstAvail = statDefs.find(s => s.isSubstat)?.statKey ?? statDefs[0].statKey;
                       const nextIdx = searchStats.length;
                       setSearchStats(prev => [...prev, firstAvail]);
                       setSearchActiveIdx(nextIdx);
