@@ -93,16 +93,14 @@ export const useAppStore = create<AppState>()(
       loadBootData: async () => {
         set({ loading: true, error: null });
         try {
-          const [statDefs, echoes, distribution, expectationPresets] = await Promise.all([
+          const [statDefs, echoes, expectationPresets] = await Promise.all([
             listStatDefs(),
             listEchoes(),
-            getGlobalDistribution({}),
             listExpectationPresets(),
           ]);
           set({
             statDefs,
             echoes,
-            distribution,
             expectationPresets,
           });
         } catch (error) {

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, params_from_iter, OptionalExtension};
 use tauri::State;
@@ -283,73 +283,106 @@ pub fn list_echoes(
         })
         .map_err(|e| format!("failed to query echoes: {e}"))?;
 
-    let mut output = Vec::new();
-
-    for row in base_rows {
-        let (
-            echo_id,
-            nickname,
-            main_stat_key,
-            cost_class,
-            status,
-            opened_slots_count,
-            created_at,
-            updated_at,
-        ) = row.map_err(|e| format!("failed to read echo row: {e}"))?;
-
-        let mut exp_stmt = conn
-            .prepare(
-                "SELECT stat_key, rank FROM echo_expectations WHERE echo_id = ?1 ORDER BY rank ASC, stat_key ASC",
-            )
-            .map_err(|e| format!("failed to prepare expectations query: {e}"))?;
-        let expectations = exp_stmt
-            .query_map([&echo_id], |r| {
-                Ok(ExpectationItem {
-                    stat_key: r.get(0)?,
-                    rank: r.get(1)?,
-                })
-            })
-            .map_err(|e| format!("failed to map expectations: {e}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("failed to collect expectations: {e}"))?;
-
-        let mut cs_stmt = conn
-            .prepare(
-                "SELECT slot_no, stat_key, tier_index, value_scaled, source
-                 FROM echo_current_substats
-                 WHERE echo_id = ?1
-                 ORDER BY slot_no ASC",
-            )
-            .map_err(|e| format!("failed to prepare current_substats query: {e}"))?;
-        let current_substats = cs_stmt
-            .query_map([&echo_id], |r| {
-                Ok(EchoSubstatSlot {
-                    slot_no: r.get(0)?,
-                    stat_key: r.get(1)?,
-                    tier_index: r.get(2)?,
-                    value_scaled: r.get(3)?,
-                    source: r.get(4)?,
-                })
-            })
-            .map_err(|e| format!("failed to map current_substats: {e}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("failed to collect current_substats: {e}"))?;
-
-        output.push(EchoSummary {
-            echo_id,
-            nickname,
-            main_stat_key,
-            cost_class,
-            status,
-            opened_slots_count,
-            created_at,
-            updated_at,
-            expectations,
-            current_substats,
-        });
+    let base_rows = base_rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("failed to collect echoes: {e}"))?;
+    if base_rows.is_empty() {
+        return Ok(Vec::new());
     }
 
-    Ok(output)
+    let echo_ids = base_rows
+        .iter()
+        .map(|(echo_id, _, _, _, _, _, _, _)| echo_id.clone())
+        .collect::<Vec<_>>();
+    let placeholders = std::iter::repeat_n("?", echo_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut expectations_by_echo: HashMap<String, Vec<ExpectationItem>> = HashMap::new();
+    let mut exp_stmt = conn
+        .prepare(&format!(
+            "SELECT echo_id, stat_key, rank
+             FROM echo_expectations
+             WHERE echo_id IN ({placeholders})
+             ORDER BY echo_id ASC, rank ASC, stat_key ASC"
+        ))
+        .map_err(|e| format!("failed to prepare batched expectations query: {e}"))?;
+    let expectation_rows = exp_stmt
+        .query_map(params_from_iter(echo_ids.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                ExpectationItem {
+                    stat_key: row.get(1)?,
+                    rank: row.get(2)?,
+                },
+            ))
+        })
+        .map_err(|e| format!("failed to map batched expectations: {e}"))?;
+    for row in expectation_rows {
+        let (echo_id, item) = row.map_err(|e| format!("failed to read expectation row: {e}"))?;
+        expectations_by_echo.entry(echo_id).or_default().push(item);
+    }
+
+    let mut current_substats_by_echo: HashMap<String, Vec<EchoSubstatSlot>> = HashMap::new();
+    let mut substats_stmt = conn
+        .prepare(&format!(
+            "SELECT echo_id, slot_no, stat_key, tier_index, value_scaled, source
+             FROM echo_current_substats
+             WHERE echo_id IN ({placeholders})
+             ORDER BY echo_id ASC, slot_no ASC"
+        ))
+        .map_err(|e| format!("failed to prepare batched substats query: {e}"))?;
+    let substat_rows = substats_stmt
+        .query_map(params_from_iter(echo_ids.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                EchoSubstatSlot {
+                    slot_no: row.get(1)?,
+                    stat_key: row.get(2)?,
+                    tier_index: row.get(3)?,
+                    value_scaled: row.get(4)?,
+                    source: row.get(5)?,
+                },
+            ))
+        })
+        .map_err(|e| format!("failed to map batched current_substats: {e}"))?;
+    for row in substat_rows {
+        let (echo_id, slot) =
+            row.map_err(|e| format!("failed to read current_substats row: {e}"))?;
+        current_substats_by_echo
+            .entry(echo_id)
+            .or_default()
+            .push(slot);
+    }
+
+    Ok(base_rows
+        .into_iter()
+        .map(
+            |(
+                echo_id,
+                nickname,
+                main_stat_key,
+                cost_class,
+                status,
+                opened_slots_count,
+                created_at,
+                updated_at,
+            )| EchoSummary {
+                expectations: expectations_by_echo.remove(&echo_id).unwrap_or_default(),
+                current_substats: current_substats_by_echo
+                    .remove(&echo_id)
+                    .unwrap_or_default(),
+                echo_id,
+                nickname,
+                main_stat_key,
+                cost_class,
+                status,
+                opened_slots_count,
+                created_at,
+                updated_at,
+            },
+        )
+        .collect())
 }
 
 #[tauri::command]

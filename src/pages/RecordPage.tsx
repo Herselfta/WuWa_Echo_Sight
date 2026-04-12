@@ -241,6 +241,18 @@ function getStatColorClass(statKey: string): string {
 export function RecordPage() {
   const { echoes, statDefs, expectationPresets, selectedEchoId, setSelectedEchoId, createFormDraft, patchCreateForm, refreshEchoes, refreshExpectationPresets } = useAppStore();
   const statMap = useMemo(() => new Map(statDefs.map((x) => [x.statKey, x])), [statDefs]);
+  const echoHistoryMeta = useMemo(() => {
+    return new Map(
+      echoes.map((echo) => {
+        const sortedSubstats = [...echo.currentSubstats].sort((a, b) => a.slotNo - b.slotNo);
+        const preStatsBySlot = new Map<number, typeof sortedSubstats>();
+        for (let slotNo = 1; slotNo <= 5; slotNo += 1) {
+          preStatsBySlot.set(slotNo, sortedSubstats.filter((slot) => slot.slotNo < slotNo));
+        }
+        return [echo.echoId, preStatsBySlot] as const;
+      }),
+    );
+  }, [echoes]);
 
   /* === create echo form — persisted in store === */
   // read aliases
@@ -610,6 +622,12 @@ export function RecordPage() {
     void loadPatternDecision({ includeManual: false });
   };
 
+  const refreshAnalysisInBackground = () => {
+    void Promise.all([loadDistribution(), loadPatternDecision()]).catch((error) => {
+      showMsg(String(error), "error");
+    });
+  };
+
   // mount fetching
   useEffect(() => { void loadDistribution(); }, []);
   useEffect(() => { void loadPatternDecision({ includeManual: false }); }, []);
@@ -816,7 +834,8 @@ export function RecordPage() {
         tierIndex,
         eventTime: normalizeLocalTime(eventTimeLocal),
       });
-      await Promise.all([refreshEchoes(), loadHistory(), loadDistribution(), loadPatternDecision()]);
+      await Promise.all([refreshEchoes(), loadHistory()]);
+      refreshAnalysisInBackground();
       showMsg(`录入成功  ·  eventId: ${result.eventId.slice(0, 8)}`, "success");
     } catch (error) {
       showMsg(String(error), "error");
@@ -835,7 +854,8 @@ export function RecordPage() {
     showMsg("");
     try {
       await deleteOrderedEvent({ eventId });
-      await Promise.all([refreshEchoes(), loadHistory(), loadDistribution(), loadPatternDecision()]);
+      await Promise.all([refreshEchoes(), loadHistory()]);
+      refreshAnalysisInBackground();
       showMsg("已撤销最近一次录入。", "success");
     } catch (error) {
       showMsg(String(error), "error");
@@ -1095,7 +1115,7 @@ export function RecordPage() {
       set.add(day);
     }
     for (const row of eventHistory) {
-      set.add(computeLocalGameDayFromIso(row.eventTime));
+      set.add(row.gameDay);
     }
     return Array.from(set).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
   }, [eventHistory, currentLocalGameDay, normalizedSelectedGameDays]);
@@ -1152,7 +1172,7 @@ export function RecordPage() {
 
   const displayedHistory = useMemo(() => {
     const filtered = eventHistory.filter(
-      (r) => effectiveSelectedGameDaySet.has(computeLocalGameDayFromIso(r.eventTime)),
+      (r) => effectiveSelectedGameDaySet.has(r.gameDay),
     );
     return filtered.slice(0, parsedHistoryLimit);
   }, [eventHistory, effectiveSelectedGameDaySet, parsedHistoryLimit]);
@@ -1786,10 +1806,8 @@ export function RecordPage() {
 
             <div className="record-history-list" ref={historyListRef}>
               {displayedHistory.map((row, idx) => {
-                const st = statDefs.find((s) => s.statKey === row.statKey);
-                // Compute preexisting stats
-                const echo = echoes.find(e => e.echoId === row.echoId);
-                const preStats = echo ? echo.currentSubstats.filter(s => s.slotNo < row.slotNo).sort((a, b) => a.slotNo - b.slotNo) : [];
+                const st = statMap.get(row.statKey);
+                const preStats = echoHistoryMeta.get(row.echoId)?.get(row.slotNo) ?? [];
 
                 // Search Highlight logic
                 let isPartOfMatch = false;

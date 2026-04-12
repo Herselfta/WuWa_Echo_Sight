@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use rusqlite::Connection;
@@ -17,11 +18,19 @@ pub fn init_database(db_path: &Path) -> Result<(), String> {
     }
 
     let conn = Connection::open(db_path).map_err(|e| format!("failed to open db: {e}"))?;
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA temp_store = MEMORY;
+         PRAGMA foreign_keys = ON;",
+    )
+    .map_err(|e| format!("failed to initialize db pragmas: {e}"))?;
     let migrations = [
         include_str!("migrations/001_init.sql"),
         include_str!("migrations/002_expectation_presets.sql"),
         include_str!("migrations/003_pattern_learning.sql"),
         include_str!("migrations/004_pattern_learning_v3.sql"),
+        include_str!("migrations/005_perf_indexes.sql"),
     ];
 
     for (idx, migration_sql) in migrations.iter().enumerate() {
@@ -41,6 +50,8 @@ pub fn open_connection(state: &AppState) -> Result<Connection, String> {
     let conn = Connection::open(&state.db_path).map_err(|e| format!("failed to open db: {e}"))?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(|e| format!("failed to set pragmas: {e}"))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("failed to set busy timeout: {e}"))?;
     Ok(conn)
 }
 

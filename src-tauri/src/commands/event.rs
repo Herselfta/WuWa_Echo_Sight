@@ -3,12 +3,12 @@ use serde_json::json;
 use tauri::State;
 use uuid::Uuid;
 
+use crate::commands::decision::{
+    invalidate_unresolved_prediction_runs_for_game_day, resolve_prediction_run_after_append,
+};
 use crate::db::{
     compute_game_day, get_setting_i64, get_tier_value, now_rfc3339, open_connection,
     parse_event_time, AppState, DEFAULT_DAY_BOUNDARY_HOUR,
-};
-use crate::commands::decision::{
-    invalidate_unresolved_prediction_runs_for_game_day, resolve_prediction_run_after_append,
 };
 use crate::domain::types::{
     AppendOrderedEventInput, AppendOrderedEventOutput, DeleteOrderedEventInput,
@@ -17,26 +17,37 @@ use crate::domain::types::{
 };
 
 fn reorder_analysis_seq(tx: &rusqlite::Transaction<'_>) -> Result<String, String> {
-    let mut stmt = tx
-        .prepare(
-            "SELECT event_id FROM ordered_events ORDER BY event_time ASC, created_seq ASC, event_id ASC",
-        )
-        .map_err(|e| format!("failed to prepare reorder query: {e}"))?;
-    let event_ids = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|e| format!("failed to read reorder rows: {e}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("failed to collect reorder rows: {e}"))?;
-
-    for (idx, event_id) in event_ids.iter().enumerate() {
-        tx.execute(
-            "UPDATE ordered_events SET analysis_seq = ?2 WHERE event_id = ?1",
-            params![event_id, (idx as i64) + 1],
-        )
-        .map_err(|e| format!("failed to update analysis_seq: {e}"))?;
+    let total_events: i64 = tx
+        .query_row("SELECT COUNT(*) FROM ordered_events", [], |row| row.get(0))
+        .map_err(|e| format!("failed to count ordered events: {e}"))?;
+    if total_events <= 1 {
+        return Ok(format!("all:{total_events}"));
     }
 
-    Ok(format!("all:{}", event_ids.len()))
+    let offset = total_events + 1;
+    tx.execute(
+        "UPDATE ordered_events SET analysis_seq = analysis_seq + ?1",
+        params![offset],
+    )
+    .map_err(|e| format!("failed to stage analysis_seq reorder: {e}"))?;
+
+    tx.execute_batch(
+        "WITH ranked AS (
+            SELECT
+                event_id,
+                ROW_NUMBER() OVER (ORDER BY event_time ASC, created_seq ASC, event_id ASC) AS new_seq
+            FROM ordered_events
+        )
+        UPDATE ordered_events
+        SET analysis_seq = (
+            SELECT ranked.new_seq
+            FROM ranked
+            WHERE ranked.event_id = ordered_events.event_id
+        );",
+    )
+    .map_err(|e| format!("failed to apply analysis_seq reorder: {e}"))?;
+
+    Ok(format!("all:{total_events}"))
 }
 
 #[tauri::command]
