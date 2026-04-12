@@ -74,7 +74,7 @@ pub fn run() {
                                              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
                                              ON CONFLICT(echo_id) DO UPDATE SET 
                                                 nickname = excluded.nickname,
-                                                status = excluded.status,
+                                                status = CASE WHEN excluded.status = 'tracking' AND echoes.status IN ('completed', 'abandoned') THEN echoes.status ELSE excluded.status END,
                                                 opened_slots_count = excluded.opened_slots_count,
                                                 updated_at = ?7",
                                             rusqlite::params![echo_id, nickname, main_stat_key, cost_class, status_val, opened_slots, now],
@@ -140,7 +140,10 @@ pub fn run() {
                                         
                                         // Recompute opened slots and save status
                                         let max_slot: i64 = tx.query_row("SELECT COALESCE(MAX(slot_no), 0) FROM echo_current_substats WHERE echo_id = ?1", rusqlite::params![echo_id], |row| row.get(0)).unwrap_or(0);
-                                        let _ = tx.execute("UPDATE echoes SET opened_slots_count = ?2, status = ?3, updated_at = ?4 WHERE echo_id = ?1", rusqlite::params![echo_id, max_slot, status_val, now]);
+                                        let _ = tx.execute(
+                                            "UPDATE echoes SET opened_slots_count = ?2, status = CASE WHEN ?3 = 'tracking' AND status IN ('completed', 'abandoned') THEN status ELSE ?3 END, updated_at = ?4 WHERE echo_id = ?1", 
+                                            rusqlite::params![echo_id, max_slot, status_val, now]
+                                        );
                                         
                                         if let Err(e) = tx.commit() {
                                             eprintln!("[EchoSync-Server] Error committing echo: {}", e);
