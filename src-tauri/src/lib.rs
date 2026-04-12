@@ -45,6 +45,11 @@ pub fn run() {
             let server_state = AppState { db_path: db_path.clone() };
             std::thread::spawn(move || {
                 println!("[EchoSync-Server] Starting local server on 127.0.0.1:8192");
+                
+                // Maintain a persistent connection for the local server thread
+                // Opening connection per request causes severe disk I/O overhead on Windows
+                let mut conn = open_connection(&server_state).expect("HTTP server DB connection failed");
+                
                 if let Ok(server) = tiny_http::Server::http("127.0.0.1:8192") {
                     for mut request in server.incoming_requests() {
                         let mut content = String::new();
@@ -53,8 +58,7 @@ pub fn run() {
                                 println!("[EchoSync-Server] Received sync payload");
 
                                 // Directly insert into SQLite
-                                if let Ok(mut conn) = open_connection(&server_state) {
-                                    if let Ok(tx) = conn.transaction() {
+                                if let Ok(tx) = conn.transaction() {
                                         // create an echo
                                         let echo_id = payload.get("echo_id").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| format!("sync_{}", uuid::Uuid::new_v4()));
                                         let nickname = payload.get("nickname").and_then(|v| v.as_str());
@@ -151,9 +155,6 @@ pub fn run() {
                                     } else {
                                         eprintln!("[EchoSync-Server] Failed to begin transaction");
                                     }
-                                } else {
-                                    eprintln!("[EchoSync-Server] Failed to open SQLite connection");
-                                }
 
                                 if let Err(e) = handle.emit("echo_updated", payload) {
                                     eprintln!("[EchoSync-Server] Failed to emit: {}", e);
