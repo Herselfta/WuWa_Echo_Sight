@@ -14,6 +14,41 @@ use crate::commands::probability::get_global_distribution_internal;
 use crate::db::{open_connection, AppState};
 use crate::domain::types::{ExportCsvInput, ExportCsvOutput, ImportDataInput, ImportDataOutput};
 
+fn ensure_foreign_keys_clean(conn: &Connection, context: &str) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA foreign_key_check")
+        .map_err(|e| format!("failed to prepare foreign key check for {context}: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(|e| format!("failed to run foreign key check for {context}: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("failed to collect foreign key check rows for {context}: {e}"))?;
+
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let sample = rows
+        .iter()
+        .take(5)
+        .map(|(table, rowid, parent, fk_index)| {
+            format!("table={table}, rowid={rowid}, parent={parent}, fk_index={fk_index}")
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(format!(
+        "{context} failed: detected {} foreign key violation(s). Sample: {sample}",
+        rows.len()
+    ))
+}
+
 fn percent_decode(input: &str) -> Result<String, String> {
     let bytes = input.as_bytes();
     let mut output = Vec::with_capacity(bytes.len());
@@ -228,7 +263,11 @@ fn parse_i64(value: &str, key: &str, table: &str) -> Result<i64, String> {
         .map_err(|e| format!("invalid i64 for {key} in {table}: {e}"))
 }
 
-fn parse_optional_i64(value: Option<&String>, key: &str, table: &str) -> Result<Option<i64>, String> {
+fn parse_optional_i64(
+    value: Option<&String>,
+    key: &str,
+    table: &str,
+) -> Result<Option<i64>, String> {
     value
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
@@ -242,12 +281,20 @@ fn parse_f64(value: &str, key: &str, table: &str) -> Result<f64, String> {
         .map_err(|e| format!("invalid f64 for {key} in {table}: {e}"))
 }
 
-fn parse_optional_f64(value: Option<&String>, key: &str, table: &str) -> Result<Option<f64>, String> {
+fn parse_optional_f64(
+    value: Option<&String>,
+    key: &str,
+    table: &str,
+) -> Result<Option<f64>, String> {
     value
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
         .map(|v| parse_f64(v, key, table))
         .transpose()
+}
+
+fn csv_line_no(index: usize) -> usize {
+    index + 2
 }
 
 fn insert_rows_from_zip(
@@ -294,7 +341,7 @@ fn insert_rows_from_zip(
     .map_err(|e| format!("failed to clear existing data: {e}"))?;
 
     if let Some(rows) = data.get("echoes.csv") {
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
             tx.execute(
                 "INSERT INTO echoes(echo_id, nickname, main_stat_key, cost_class, status, opened_slots_count, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -313,13 +360,13 @@ fn insert_rows_from_zip(
                     get_required(row, "updated_at", "echoes.csv")?,
                 ],
             )
-            .map_err(|e| format!("failed to import echoes row: {e}"))?;
+            .map_err(|e| format!("failed to import echoes.csv line {}: {e}", csv_line_no(idx)))?;
         }
         imported_tables.push("echoes".to_string());
     }
 
     if let Some(rows) = data.get("echo_expectations.csv") {
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
             tx.execute(
                 "INSERT INTO echo_expectations(echo_id, stat_key, rank) VALUES (?1, ?2, ?3)",
                 rusqlite::params![
@@ -332,13 +379,18 @@ fn insert_rows_from_zip(
                     )?,
                 ],
             )
-            .map_err(|e| format!("failed to import echo_expectations row: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to import echo_expectations.csv line {}: {e}",
+                    csv_line_no(idx)
+                )
+            })?;
         }
         imported_tables.push("echo_expectations".to_string());
     }
 
     if let Some(rows) = data.get("echo_current_substats.csv") {
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
             tx.execute(
                 "INSERT INTO echo_current_substats(echo_id, slot_no, stat_key, tier_index, value_scaled, source, event_id)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -352,13 +404,18 @@ fn insert_rows_from_zip(
                     row.get("event_id").cloned().filter(|s| !s.is_empty()),
                 ],
             )
-            .map_err(|e| format!("failed to import echo_current_substats row: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to import echo_current_substats.csv line {}: {e}",
+                    csv_line_no(idx)
+                )
+            })?;
         }
         imported_tables.push("echo_current_substats".to_string());
     }
 
     if let Some(rows) = data.get("events.csv") {
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
             tx.execute(
                 "INSERT INTO ordered_events(
                     event_id, echo_id, slot_no, stat_key, tier_index, value_scaled,
@@ -398,13 +455,13 @@ fn insert_rows_from_zip(
                     get_required(row, "created_at", "events.csv")?,
                 ],
             )
-            .map_err(|e| format!("failed to import events row: {e}"))?;
+            .map_err(|e| format!("failed to import events.csv line {}: {e}", csv_line_no(idx)))?;
         }
         imported_tables.push("ordered_events".to_string());
     }
 
     if let Some(rows) = data.get("event_edit_logs.csv") {
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
             tx.execute(
                 "INSERT INTO event_edit_logs(log_id, event_id, before_json, after_json, reorder_mode, edited_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -417,13 +474,18 @@ fn insert_rows_from_zip(
                     get_required(row, "edited_at", "event_edit_logs.csv")?,
                 ],
             )
-            .map_err(|e| format!("failed to import event_edit_logs row: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to import event_edit_logs.csv line {}: {e}",
+                    csv_line_no(idx)
+                )
+            })?;
         }
         imported_tables.push("event_edit_logs".to_string());
     }
 
     if let Some(rows) = data.get("pattern_prediction_runs.csv") {
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
             tx.execute(
                 "INSERT INTO pattern_prediction_runs(
                     run_id, context_hash, game_day, seq_len, mode, weights_json,
@@ -434,22 +496,51 @@ fn insert_rows_from_zip(
                     get_required(row, "run_id", "pattern_prediction_runs.csv")?,
                     get_required(row, "context_hash", "pattern_prediction_runs.csv")?,
                     get_required(row, "game_day", "pattern_prediction_runs.csv")?,
-                    parse_i64(get_required(row, "seq_len", "pattern_prediction_runs.csv")?, "seq_len", "pattern_prediction_runs.csv")?,
+                    parse_i64(
+                        get_required(row, "seq_len", "pattern_prediction_runs.csv")?,
+                        "seq_len",
+                        "pattern_prediction_runs.csv"
+                    )?,
                     get_required(row, "mode", "pattern_prediction_runs.csv")?,
                     get_required(row, "weights_json", "pattern_prediction_runs.csv")?,
                     get_required(row, "predictions_json", "pattern_prediction_runs.csv")?,
                     get_required(row, "context_json", "pattern_prediction_runs.csv")?,
-                    row.get("actual_stat_key").cloned().filter(|s| !s.is_empty()),
-                    row.get("actual_event_id").cloned().filter(|s| !s.is_empty()),
-                    parse_optional_i64(row.get("actual_tier_index"), "actual_tier_index", "pattern_prediction_runs.csv")?,
-                    parse_optional_i64(row.get("top1_hit"), "top1_hit", "pattern_prediction_runs.csv")?,
-                    parse_optional_i64(row.get("top3_hit"), "top3_hit", "pattern_prediction_runs.csv")?,
-                    parse_optional_f64(row.get("log_loss"), "log_loss", "pattern_prediction_runs.csv")?,
+                    row.get("actual_stat_key")
+                        .cloned()
+                        .filter(|s| !s.is_empty()),
+                    row.get("actual_event_id")
+                        .cloned()
+                        .filter(|s| !s.is_empty()),
+                    parse_optional_i64(
+                        row.get("actual_tier_index"),
+                        "actual_tier_index",
+                        "pattern_prediction_runs.csv"
+                    )?,
+                    parse_optional_i64(
+                        row.get("top1_hit"),
+                        "top1_hit",
+                        "pattern_prediction_runs.csv"
+                    )?,
+                    parse_optional_i64(
+                        row.get("top3_hit"),
+                        "top3_hit",
+                        "pattern_prediction_runs.csv"
+                    )?,
+                    parse_optional_f64(
+                        row.get("log_loss"),
+                        "log_loss",
+                        "pattern_prediction_runs.csv"
+                    )?,
                     row.get("resolved_at").cloned().filter(|s| !s.is_empty()),
                     get_required(row, "created_at", "pattern_prediction_runs.csv")?,
                 ],
             )
-            .map_err(|e| format!("failed to import pattern_prediction_runs row: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to import pattern_prediction_runs.csv line {}: {e}",
+                    csv_line_no(idx)
+                )
+            })?;
         }
         imported_tables.push("pattern_prediction_runs".to_string());
     }
@@ -473,7 +564,7 @@ fn insert_rows_from_zip(
     }
 
     if let Some(rows) = data.get("expectation_presets.csv") {
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
             tx.execute(
                 "INSERT INTO expectation_presets(preset_id, name, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4)",
@@ -484,13 +575,18 @@ fn insert_rows_from_zip(
                     get_required(row, "updated_at", "expectation_presets.csv")?,
                 ],
             )
-            .map_err(|e| format!("failed to import expectation_presets row: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to import expectation_presets.csv line {}: {e}",
+                    csv_line_no(idx)
+                )
+            })?;
         }
         imported_tables.push("expectation_presets".to_string());
     }
 
     if let Some(rows) = data.get("expectation_preset_items.csv") {
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
             tx.execute(
                 "INSERT INTO expectation_preset_items(preset_id, stat_key, rank)
                  VALUES (?1, ?2, ?3)",
@@ -504,7 +600,12 @@ fn insert_rows_from_zip(
                     )?,
                 ],
             )
-            .map_err(|e| format!("failed to import expectation_preset_items row: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to import expectation_preset_items.csv line {}: {e}",
+                    csv_line_no(idx)
+                )
+            })?;
         }
         imported_tables.push("expectation_preset_items".to_string());
     }
@@ -512,7 +613,7 @@ fn insert_rows_from_zip(
     if let Some(rows) = data.get("app_settings.csv") {
         tx.execute("DELETE FROM app_settings", [])
             .map_err(|e| format!("failed to clear app_settings: {e}"))?;
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
             tx.execute(
                 "INSERT INTO app_settings(key, value) VALUES (?1, ?2)",
                 rusqlite::params![
@@ -520,7 +621,12 @@ fn insert_rows_from_zip(
                     get_required(row, "value", "app_settings.csv")?,
                 ],
             )
-            .map_err(|e| format!("failed to import app_settings row: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to import app_settings.csv line {}: {e}",
+                    csv_line_no(idx)
+                )
+            })?;
         }
         imported_tables.push("app_settings".to_string());
     }
@@ -537,6 +643,7 @@ pub fn export_csv(
     input: ExportCsvInput,
 ) -> Result<ExportCsvOutput, String> {
     let conn = open_connection(&state)?;
+    ensure_foreign_keys_clean(&conn, "export preflight")?;
 
     let export_name = format!(
         "wuwa_echo_sight_export_{}.zip",
@@ -625,6 +732,7 @@ pub fn import_data(
         ZipArchive::new(file).map_err(|e| format!("failed to parse zip archive: {e}"))?;
 
     let imported_tables = insert_rows_from_zip(&mut conn, &mut archive)?;
+    ensure_foreign_keys_clean(&conn, "import verification")?;
 
     Ok(ImportDataOutput {
         ok: true,
