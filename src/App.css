@@ -134,6 +134,17 @@ body.is-dragging-chain * {
   overflow-y: auto;
 }
 
+.tab-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.tab-panel[hidden] {
+  display: none !important;
+}
+
 .echo-pool-page {
   overflow: hidden;
 }

@@ -85,7 +85,7 @@ function App() {
       {error ? <p className="error-banner">{error}</p> : null}
       {TABS.map((tab) =>
         mountedTabs[tab.key] ? (
-          <section key={tab.key} hidden={activeTab !== tab.key}>
+          <section key={tab.key} className="tab-panel" hidden={activeTab !== tab.key}>
             {mountedTabs[tab.key]}
           </section>
         ) : null,
