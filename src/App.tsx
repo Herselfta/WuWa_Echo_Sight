@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import { EchoPoolPage } from "./pages/EchoPoolPage";
 import { RecordPage } from "./pages/RecordPage";
@@ -25,6 +26,17 @@ function App() {
 
   useEffect(() => {
     void loadBootData();
+    
+    // Register global listener for cross-app IPC (e.g. from ok-wuthering-waves)
+    const unlistenPromise = listen("echo_updated", (event) => {
+      console.log("[EchoSync-UI] New echo data received from background! Triggering refresh...", event.payload);
+      // Re-fetch everything to ensure UI accurately reflects the database
+      void loadBootData();
+    });
+
+    return () => {
+      unlistenPromise.then(unlisten => unlisten());
+    };
   }, [loadBootData]);
 
   const content = useMemo(() => {
