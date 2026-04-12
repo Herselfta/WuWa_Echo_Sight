@@ -239,7 +239,18 @@ function getStatColorClass(statKey: string): string {
 /* ── component ───────────────────────────────────── */
 
 export function RecordPage() {
-  const { echoes, statDefs, expectationPresets, selectedEchoId, setSelectedEchoId, createFormDraft, patchCreateForm, refreshEchoes, refreshExpectationPresets } = useAppStore();
+  const {
+    echoes,
+    statDefs,
+    expectationPresets,
+    selectedEchoId,
+    setSelectedEchoId,
+    createFormDraft,
+    patchCreateForm,
+    refreshEchoes,
+    refreshExpectationPresets,
+    externalSyncToken,
+  } = useAppStore();
   const statMap = useMemo(() => new Map(statDefs.map((x) => [x.statKey, x])), [statDefs]);
   const echoHistoryMeta = useMemo(() => {
     return new Map(
@@ -623,21 +634,35 @@ export function RecordPage() {
   };
 
   const refreshAnalysisInBackground = () => {
-    void Promise.all([loadDistribution(), loadPatternDecision()]).catch((error) => {
+    const tasks: Array<Promise<unknown>> = [loadDistribution()];
+    if (boardSurfaceTab === "decision" || patternDecision !== null) {
+      tasks.push(loadPatternDecision());
+    }
+    void Promise.all(tasks).catch((error) => {
       showMsg(String(error), "error");
     });
   };
 
   // mount fetching
   useEffect(() => { void loadDistribution(); }, []);
-  useEffect(() => { void loadPatternDecision({ includeManual: false }); }, []);
   // history fetching
   useEffect(() => { void loadHistory(); }, []);
+
+  useEffect(() => {
+    if (boardSurfaceTab !== "decision" || patternDecision !== null) return;
+    void loadPatternDecision({ includeManual: false });
+  }, [boardSurfaceTab, patternDecision]);
 
   useEffect(() => { void loadDistribution(); }, [
     distributionFilter.startTime, distributionFilter.endTime,
     distributionFilter.mainStatKey, distributionFilter.costClass, distributionFilter.status,
   ]);
+
+  useEffect(() => {
+    if (externalSyncToken === 0) return;
+    void loadHistory();
+    refreshAnalysisInBackground();
+  }, [externalSyncToken]);
 
   /* ── chain helpers for create form ─── */
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import { EchoPoolPage } from "./pages/EchoPoolPage";
@@ -22,7 +22,12 @@ const TAB_NOTES: Record<TabKey, string> = {
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("record");
-  const { loading, error, loadBootData } = useAppStore();
+  const [visitedTabs, setVisitedTabs] = useState<Record<TabKey, boolean>>({
+    record: true,
+    echoPool: false,
+    dataTools: false,
+  });
+  const { loading, error, loadBootData, notifyExternalSync } = useAppStore();
 
   useEffect(() => {
     void loadBootData();
@@ -30,24 +35,31 @@ function App() {
     // Register global listener for cross-app IPC (e.g. from ok-wuthering-waves)
     const unlistenPromise = listen("echo_updated", (event) => {
       console.log("[EchoSync-UI] New echo data received from background! Triggering refresh...", event.payload);
-      // Re-fetch everything to ensure UI accurately reflects the database
-      void loadBootData();
+      void (async () => {
+        await loadBootData();
+        notifyExternalSync();
+      })();
     });
 
     return () => {
       unlistenPromise.then(unlisten => unlisten());
     };
-  }, [loadBootData]);
+  }, [loadBootData, notifyExternalSync]);
 
-  const content = useMemo(() => {
-    if (activeTab === "echoPool") {
-      return <EchoPoolPage />;
-    }
-    if (activeTab === "dataTools") {
-      return <DataToolsPage />;
-    }
-    return <RecordPage />;
-  }, [activeTab]);
+  const switchTab = (tab: TabKey) => {
+    setActiveTab(tab);
+    setVisitedTabs((current) => (current[tab] ? current : { ...current, [tab]: true }));
+  };
+
+  const mountedTabs = useMemo(
+    () =>
+      ({
+        record: visitedTabs.record ? <RecordPage /> : null,
+        echoPool: visitedTabs.echoPool ? <EchoPoolPage /> : null,
+        dataTools: visitedTabs.dataTools ? <DataToolsPage /> : null,
+      }) satisfies Record<TabKey, ReactNode>,
+    [visitedTabs],
+  );
 
   return (
     <main className="app-shell">
@@ -59,7 +71,7 @@ function App() {
                 key={tab.key}
                 className={tab.key === activeTab ? "tab-btn active" : "tab-btn"}
                 type="button"
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() => switchTab(tab.key)}
               >
                 {tab.label}
               </button>
@@ -71,7 +83,13 @@ function App() {
       </header>
 
       {error ? <p className="error-banner">{error}</p> : null}
-      {content}
+      {TABS.map((tab) =>
+        mountedTabs[tab.key] ? (
+          <section key={tab.key} hidden={activeTab !== tab.key}>
+            {mountedTabs[tab.key]}
+          </section>
+        ) : null,
+      )}
     </main>
   );
 }

@@ -21,7 +21,7 @@ function toLocalInputValue(iso: string): string {
 }
 
 export function DataToolsPage() {
-  const { distributionFilter, loadBootData } = useAppStore();
+  const { distributionFilter, loadBootData, externalSyncToken } = useAppStore();
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventId, setEventId] = useState("");
   const [slotNo, setSlotNo] = useState("");
@@ -39,6 +39,11 @@ export function DataToolsPage() {
   useEffect(() => {
     void loadEvents();
   }, []);
+
+  useEffect(() => {
+    if (externalSyncToken === 0) return;
+    void loadEvents();
+  }, [externalSyncToken]);
 
   const fillFromRow = (row: EventRow) => {
     setEventId(row.eventId);

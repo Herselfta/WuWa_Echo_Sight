@@ -36,6 +36,7 @@ interface AppState {
   echoes: EchoSummary[];
   expectationPresets: ExpectationPreset[];
   distribution: DistributionPayload | null;
+  externalSyncToken: number;
   selectedEchoId: string;
   distributionFilter: DistributionFilter;
   loading: boolean;
@@ -46,6 +47,7 @@ interface AppState {
   patchRecordPageDraft: (patch: Partial<RecordPageDraft>) => void;
   setDistributionFilter: (patch: Partial<DistributionFilter>) => void;
   setSelectedEchoId: (id: string) => void;
+  notifyExternalSync: () => void;
   loadBootData: () => Promise<void>;
   refreshEchoes: () => Promise<void>;
   refreshDistribution: () => Promise<void>;
@@ -59,6 +61,7 @@ export const useAppStore = create<AppState>()(
       echoes: [],
       expectationPresets: [],
       distribution: null,
+      externalSyncToken: 0,
       selectedEchoId: "",
       createFormDraft: {
         expanded: true,
@@ -86,6 +89,8 @@ export const useAppStore = create<AppState>()(
         }));
       },
       setSelectedEchoId: (id) => set({ selectedEchoId: id }),
+      notifyExternalSync: () =>
+        set((state) => ({ externalSyncToken: state.externalSyncToken + 1 })),
       patchCreateForm: (patch) =>
         set((state) => ({ createFormDraft: { ...state.createFormDraft, ...patch } })),
       patchRecordPageDraft: (patch) =>
