@@ -293,6 +293,7 @@ Daily pattern decision (MVP)
 #[serde(rename_all = "camelCase")]
 pub struct DailyPatternDecisionFilter {
     pub game_day: Option<String>,
+    pub echo_id: Option<String>,
     pub manual_start_index: Option<i64>,
     pub manual_cycle_len: Option<i64>,
     pub manual_guess_shapes: Option<Vec<String>>,
@@ -413,16 +414,36 @@ pub struct PatternBlendWeights {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PatternBenchmarkRow {
+    pub key: String,
+    pub label: String,
+    pub top1_accuracy: f64,
+    pub top3_coverage: f64,
+    pub mean_true_prob: f64,
+    pub mean_log_loss: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PatternBacktestSummary {
     pub sample_count: i64,
     pub top1_accuracy: f64,
     pub top3_coverage: f64,
     pub mean_true_prob: f64,
     pub mean_log_loss: f64,
+    pub freq_top1_accuracy: f64,
+    pub freq_top3_coverage: f64,
+    pub freq_mean_true_prob: f64,
+    pub freq_mean_log_loss: f64,
+    pub random_top1_accuracy: f64,
+    pub random_top3_coverage: f64,
+    pub random_mean_true_prob: f64,
+    pub random_mean_log_loss: f64,
     pub joint_top1_accuracy: f64,
     pub joint_top3_coverage: f64,
     pub mean_true_joint_prob: f64,
     pub mean_joint_log_loss: f64,
+    pub benchmarks: Vec<PatternBenchmarkRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
