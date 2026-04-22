@@ -92,6 +92,7 @@ export interface EventRow {
 
 export interface DailyPatternDecisionFilter {
   gameDay?: string;
+  echoId?: string;
   manualStartIndex?: number;
   manualCycleLen?: number;
   manualGuessShapes?: string[];
@@ -200,10 +201,28 @@ export interface PatternBacktestSummary {
   top3Coverage: number;
   meanTrueProb: number;
   meanLogLoss: number;
+  freqTop1Accuracy: number;
+  freqTop3Coverage: number;
+  freqMeanTrueProb: number;
+  freqMeanLogLoss: number;
+  randomTop1Accuracy: number;
+  randomTop3Coverage: number;
+  randomMeanTrueProb: number;
+  randomMeanLogLoss: number;
   jointTop1Accuracy: number;
   jointTop3Coverage: number;
   meanTrueJointProb: number;
   meanJointLogLoss: number;
+  benchmarks: PatternBenchmarkRow[];
+}
+
+export interface PatternBenchmarkRow {
+  key: string;
+  label: string;
+  top1Accuracy: number;
+  top3Coverage: number;
+  meanTrueProb: number;
+  meanLogLoss: number;
 }
 
 export interface PatternStateSummary {

@@ -79,6 +79,9 @@ const PATTERN_WEIGHT_SOURCE_LABEL: Record<string, string> = {
   fallback: "Fallback",
   global: "Global",
   bucketed: "Bucketed",
+  bucketed3d: "Bucket 3D",
+  bucketed4d: "Bucket 4D",
+  bucketed5d: "Bucket 5D",
 };
 
 const PATTERN_EXPERT_LABEL: Record<string, string> = {
@@ -608,6 +611,7 @@ export function RecordPage() {
     try {
       const autoMinLen = Math.max(2, Number(patternAutoMinLenStr) || 3);
       const filter = {
+        echoId: selectedEchoId || undefined,
         minLen: autoMinLen,
         minSupport: 2,
         maxOrder: 5,
@@ -2206,6 +2210,46 @@ export function RecordPage() {
                   </div>
                 </div>
                 <div className="record-pattern-summary-card">
+                  <span className="record-pattern-summary-title">基线对照</span>
+                  {patternDecision.backtestSummary.benchmarks.length > 0 ? (
+                    <div className="record-dist-table-wrap" style={{ marginTop: 6 }}>
+                      <table className="table compact-table">
+                        <thead>
+                          <tr>
+                            <th>方案</th>
+                            <th>Top1</th>
+                            <th>Top3</th>
+                            <th>MeanP</th>
+                            <th>LogLoss</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {patternDecision.backtestSummary.benchmarks.map((row) => (
+                            <tr key={row.key}>
+                              <td>{row.label}</td>
+                              <td>{toPercent(row.top1Accuracy)}</td>
+                              <td>{toPercent(row.top3Coverage)}</td>
+                              <td>{toPercent(row.meanTrueProb)}</td>
+                              <td>{row.meanLogLoss.toFixed(3)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="record-pattern-chip-list">
+                      <span className="record-pattern-chip">Freq Top1 {toPercent(patternDecision.backtestSummary.freqTop1Accuracy)}</span>
+                      <span className="record-pattern-chip">Freq Top3 {toPercent(patternDecision.backtestSummary.freqTop3Coverage)}</span>
+                      <span className="record-pattern-chip">Freq MeanP {toPercent(patternDecision.backtestSummary.freqMeanTrueProb)}</span>
+                      <span className="record-pattern-chip">Freq LogLoss {patternDecision.backtestSummary.freqMeanLogLoss.toFixed(3)}</span>
+                      <span className="record-pattern-chip">Rand Top1 {toPercent(patternDecision.backtestSummary.randomTop1Accuracy)}</span>
+                      <span className="record-pattern-chip">Rand Top3 {toPercent(patternDecision.backtestSummary.randomTop3Coverage)}</span>
+                      <span className="record-pattern-chip">Rand MeanP {toPercent(patternDecision.backtestSummary.randomMeanTrueProb)}</span>
+                      <span className="record-pattern-chip">Rand LogLoss {patternDecision.backtestSummary.randomMeanLogLoss.toFixed(3)}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="record-pattern-summary-card">
                   <span className="record-pattern-summary-title">上下文与权重</span>
                   <div className="record-pattern-chip-list">
                     <span className="record-pattern-chip">源 {formatPatternWeightSource(patternDecision.blendWeights.source)}</span>
@@ -2213,7 +2257,7 @@ export function RecordPage() {
                     <span className="record-pattern-chip">markov {patternDecision.blendWeights.markovHitBucket}</span>
                     <span className="record-pattern-chip">motif {patternDecision.blendWeights.motifHitBucket}</span>
                     <span className="record-pattern-chip">active {patternDecision.blendWeights.activeStatBucket}</span>
-                    <span className="record-pattern-chip">tier {patternDecision.blendWeights.tierSignalBucket}</span>
+                    <span className="record-pattern-chip">ctx {patternDecision.blendWeights.tierSignalBucket}</span>
                     {patternDecision.blendWeights.onlineAdjusted ? (
                       <span className="record-pattern-chip">online+</span>
                     ) : null}
