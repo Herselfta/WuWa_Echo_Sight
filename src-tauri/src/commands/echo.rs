@@ -196,28 +196,6 @@ pub fn delete_echo(state: State<'_, AppState>, input: DeleteEchoInput) -> Result
         return Err(format!("echo not found: {}", input.echo_id));
     }
 
-    tx.execute(
-        "DELETE FROM event_edit_logs
-         WHERE event_id IN (SELECT event_id FROM ordered_events WHERE echo_id = ?1)",
-        [&input.echo_id],
-    )
-    .map_err(|e| format!("failed to delete event_edit_logs: {e}"))?;
-
-    tx.execute(
-        "DELETE FROM ordered_events WHERE echo_id = ?1",
-        [&input.echo_id],
-    )
-    .map_err(|e| format!("failed to delete ordered_events: {e}"))?;
-    tx.execute(
-        "DELETE FROM echo_current_substats WHERE echo_id = ?1",
-        [&input.echo_id],
-    )
-    .map_err(|e| format!("failed to delete current_substats: {e}"))?;
-    tx.execute(
-        "DELETE FROM echo_expectations WHERE echo_id = ?1",
-        [&input.echo_id],
-    )
-    .map_err(|e| format!("failed to delete expectations: {e}"))?;
     tx.execute("DELETE FROM echoes WHERE echo_id = ?1", [&input.echo_id])
         .map_err(|e| format!("failed to delete echo: {e}"))?;
 

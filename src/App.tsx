@@ -33,15 +33,24 @@ function App() {
     void loadBootData();
     
     // Register global listener for cross-app IPC (e.g. from ok-wuthering-waves)
+    let syncTimeout: number | undefined;
     const unlistenPromise = listen("echo_updated", (event) => {
-      console.log("[EchoSync-UI] New echo data received from background! Triggering refresh...", event.payload);
-      void (async () => {
-        await loadBootData();
-        notifyExternalSync();
-      })();
+      console.log("[EchoSync-UI] New echo data received from background! Debouncing refresh...", event.payload);
+      if (syncTimeout !== undefined) {
+        window.clearTimeout(syncTimeout);
+      }
+      syncTimeout = window.setTimeout(() => {
+        void (async () => {
+          await loadBootData();
+          notifyExternalSync();
+        })();
+      }, 500); // Debounce 500ms to prevent extreme lockups and CPU spikes
     });
 
     return () => {
+      if (syncTimeout !== undefined) {
+        window.clearTimeout(syncTimeout);
+      }
       unlistenPromise.then(unlisten => unlisten());
     };
   }, [loadBootData, notifyExternalSync]);

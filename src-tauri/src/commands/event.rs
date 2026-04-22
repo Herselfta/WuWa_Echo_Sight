@@ -24,7 +24,14 @@ fn reorder_analysis_seq(tx: &rusqlite::Transaction<'_>) -> Result<String, String
         return Ok(format!("all:{total_events}"));
     }
 
-    let offset = total_events + 1;
+    let offset: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(analysis_seq), 0) + 1 FROM ordered_events",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("failed to get max analysis_seq: {e}"))?;
+
     tx.execute(
         "UPDATE ordered_events SET analysis_seq = analysis_seq + ?1",
         params![offset],

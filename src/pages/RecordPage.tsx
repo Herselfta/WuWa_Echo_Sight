@@ -140,7 +140,7 @@ function computeLocalGameDayFromDate(date: Date): string {
   return formatLocalGameDay(shifted);
 }
 
-function computeLocalGameDayFromIso(iso: string): string {
+export function computeLocalGameDayFromIso(iso: string): string {
   return computeLocalGameDayFromDate(new Date(iso));
 }
 
@@ -583,6 +583,11 @@ export function RecordPage() {
     [effectiveSelectedGameDays],
   );
 
+  const currentEchoHistory = useMemo(() => {
+    if (!selectedEchoId) return [];
+    return eventHistory.filter((e) => e.echoId === selectedEchoId);
+  }, [eventHistory, selectedEchoId]);
+
   const loadHistory = async () => {
     const fetchLimit = 5000;
     const rows = await getEventHistory({ limit: fetchLimit });
@@ -852,13 +857,15 @@ export function RecordPage() {
     showMsg("");
 
     try {
+      const actualEventTime = normalizeLocalTime(eventTimeLocal);
       const result = await appendOrderedEvent({
         echoId: selectedEchoId,
         slotNo: nextSlotNo,
         statKey: selectedStat.statKey,
         tierIndex,
-        eventTime: normalizeLocalTime(eventTimeLocal),
+        eventTime: actualEventTime,
       });
+      setEventTimeLocal(toLocalInputValue(new Date())); // Reset to avoid stale time issues
       await Promise.all([refreshEchoes(), loadHistory()]);
       refreshAnalysisInBackground();
       showMsg(`录入成功  ·  eventId: ${result.eventId.slice(0, 8)}`, "success");
@@ -1496,12 +1503,12 @@ export function RecordPage() {
                 </button>
                 <button
                   type="button"
-                  className={`record-undo-btn ${undoConfirmId && eventHistory.length > 0 ? "btn-danger" : ""}`}
-                  disabled={saving || eventHistory.length === 0}
-                  onClick={() => eventHistory.length > 0 && handleUndoEvent(eventHistory[0].eventId)}
-                  title="撤销最近一次录入"
+                  className={`record-undo-btn ${undoConfirmId && currentEchoHistory.length > 0 ? "btn-danger" : ""}`}
+                  disabled={saving || currentEchoHistory.length === 0}
+                  onClick={() => currentEchoHistory.length > 0 && handleUndoEvent(currentEchoHistory[0].eventId)}
+                  title="撤销当前声骸最近一次录入"
                 >
-                  {undoConfirmId && eventHistory.length > 0 && undoConfirmId === eventHistory[0].eventId ? "确认撤销" : "撤销"}
+                  {undoConfirmId && currentEchoHistory.length > 0 && undoConfirmId === currentEchoHistory[0].eventId ? "确认撤销" : "撤销"}
                 </button>
               </div>
             </div>

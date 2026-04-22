@@ -48,7 +48,13 @@ pub fn init_database(db_path: &Path) -> Result<(), String> {
 
 pub fn open_connection(state: &AppState) -> Result<Connection, String> {
     let conn = Connection::open(&state.db_path).map_err(|e| format!("failed to open db: {e}"))?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA temp_store = MEMORY;
+         PRAGMA mmap_size = 300000000;
+         PRAGMA journal_mode = WAL;",
+    )
         .map_err(|e| format!("failed to set pragmas: {e}"))?;
     conn.busy_timeout(Duration::from_secs(5))
         .map_err(|e| format!("failed to set busy timeout: {e}"))?;
