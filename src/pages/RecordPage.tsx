@@ -319,6 +319,7 @@ export function RecordPage() {
   const [statKey, setStatKey] = useState<string>("crit_rate");
   const [tierIndex, setTierIndex] = useState<number>(1);
   const [eventTimeLocal, setEventTimeLocal] = useState<string>(toLocalInputValue(new Date()));
+  const [isAutoTime, setIsAutoTime] = useState<boolean>(true);
   const [eventHistory, setEventHistory] = useState<EventRow[]>([]);
   const [historyDatePopoverOpen, setHistoryDatePopoverOpen] = useState(false);
   const [historyDateAnchorIdx, setHistoryDateAnchorIdx] = useState<number | null>(null);
@@ -861,7 +862,7 @@ export function RecordPage() {
     showMsg("");
 
     try {
-      const actualEventTime = normalizeLocalTime(eventTimeLocal);
+      const actualEventTime = isAutoTime ? new Date().toISOString() : normalizeLocalTime(eventTimeLocal);
       const result = await appendOrderedEvent({
         echoId: selectedEchoId,
         slotNo: nextSlotNo,
@@ -869,7 +870,9 @@ export function RecordPage() {
         tierIndex,
         eventTime: actualEventTime,
       });
-      setEventTimeLocal(toLocalInputValue(new Date())); // Reset to avoid stale time issues
+      if (!isAutoTime) {
+        setEventTimeLocal(toLocalInputValue(new Date())); // Reset to avoid stale time issues
+      }
       await Promise.all([refreshEchoes(), loadHistory()]);
       refreshAnalysisInBackground();
       showMsg(`录入成功  ·  eventId: ${result.eventId.slice(0, 8)}`, "success");
@@ -1471,11 +1474,39 @@ export function RecordPage() {
 
               <div className="record-event-controls">
                 <label className="record-field record-field-compact">
-                  <span className="record-field-label">时间</span>
+                  <span className="record-field-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    时间
+                    <button 
+                      type="button" 
+                      className={`record-auto-time-toggle ${isAutoTime ? 'active' : ''}`}
+                      onClick={() => {
+                        if (isAutoTime) {
+                          setEventTimeLocal(toLocalInputValue(new Date()));
+                        }
+                        setIsAutoTime(!isAutoTime);
+                      }}
+                      style={{ 
+                        padding: '0 4px', 
+                        fontSize: '10px', 
+                        height: '16px', 
+                        lineHeight: '14px',
+                        marginLeft: '4px',
+                        background: isAutoTime ? 'var(--accent)' : 'transparent',
+                        color: isAutoTime ? '#fff' : 'var(--muted)',
+                        borderColor: isAutoTime ? 'var(--accent)' : 'var(--line)'
+                      }}
+                    >
+                      {isAutoTime ? '实时' : '手动'}
+                    </button>
+                  </span>
                   <input
                     type="datetime-local"
-                    value={eventTimeLocal}
-                    onChange={(e) => setEventTimeLocal(e.target.value)}
+                    value={isAutoTime ? toLocalInputValue(new Date()) : eventTimeLocal}
+                    onChange={(e) => {
+                      setEventTimeLocal(e.target.value);
+                      setIsAutoTime(false);
+                    }}
+                    disabled={isAutoTime}
                   />
                 </label>
 
