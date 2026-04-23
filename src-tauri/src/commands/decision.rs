@@ -606,7 +606,7 @@ fn load_echo_blocked_stats(conn: &Connection, echo_id: &str) -> Result<HashSet<S
         .optional()
         .map_err(|e| format!("failed to query echo context: {e}"))?;
     if echo_exists.is_none() {
-        return Err(format!("echo not found for prediction context: {echo_id}"));
+        return Ok(HashSet::new()); // Default to no blocked stats if the echo doesn't exist anymore
     }
 
     let mut stmt = conn

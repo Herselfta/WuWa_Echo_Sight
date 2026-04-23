@@ -50,6 +50,8 @@ interface AppState {
   notifyExternalSync: () => void;
   loadBootData: () => Promise<void>;
   refreshEchoes: () => Promise<void>;
+  deleteLocalEcho: (echoId: string) => void;
+  deleteLocalEchoes: (echoIds: string[]) => void;
   refreshDistribution: () => Promise<void>;
   refreshExpectationPresets: () => Promise<void>;
 }
@@ -121,6 +123,19 @@ export const useAppStore = create<AppState>()(
         } catch (error) {
           set({ error: String(error) });
         }
+      },
+      deleteLocalEcho: (echoId: string) => {
+        set((state) => ({
+          echoes: state.echoes.filter((e) => e.echoId !== echoId),
+          selectedEchoId: state.selectedEchoId === echoId ? null : state.selectedEchoId,
+        }));
+      },
+      deleteLocalEchoes: (echoIds: string[]) => {
+        const idSet = new Set(echoIds);
+        set((state) => ({
+          echoes: state.echoes.filter((e) => !idSet.has(e.echoId)),
+          selectedEchoId: state.selectedEchoId && idSet.has(state.selectedEchoId) ? null : state.selectedEchoId,
+        }));
       },
       refreshDistribution: async () => {
         try {

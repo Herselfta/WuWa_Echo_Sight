@@ -303,7 +303,7 @@ function formatScaledValue(unit: string, valueScaled: number) {
 }
 
 export function EchoPoolPage() {
-  const { statDefs, echoes, expectationPresets, refreshEchoes, refreshExpectationPresets, selectedEchoId, setSelectedEchoId } = useAppStore();
+  const { statDefs, echoes, expectationPresets, refreshEchoes, deleteLocalEcho, deleteLocalEchoes, refreshExpectationPresets, selectedEchoId, setSelectedEchoId } = useAppStore();
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const presetSelectorRef = useRef<HTMLDivElement | null>(null);
   const presetSelectorButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1002,7 +1002,14 @@ export function EchoPoolPage() {
     setMessage("");
     try {
       const results = await Promise.allSettled(targetEchoIds.map((echoId) => deleteEcho(echoId)));
-      await refreshEchoes();
+      
+      const successfulIds = results
+        .map((r, idx) => (r.status === "fulfilled" ? targetEchoIds[idx] : null))
+        .filter((id) => id !== null) as string[];
+      
+      deleteLocalEchoes(successfulIds);
+      
+      // refreshEchoes(); // We no longer await a full list fetching loop if we handle state optimally
 
       const targetSet = new Set(targetEchoIds);
       setSelectedEchoIds((prev) => prev.filter((echoId) => !targetSet.has(echoId)));
@@ -1733,7 +1740,7 @@ export function EchoPoolPage() {
     setMessage("");
     try {
       await deleteEcho(echoId);
-      await refreshEchoes();
+      deleteLocalEcho(echoId); // 局部删除, 抛弃 refreshEchoes;
       if (editingEchoId === echoId) {
         cancelEdit();
       }
