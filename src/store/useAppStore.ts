@@ -37,7 +37,7 @@ interface AppState {
   expectationPresets: ExpectationPreset[];
   distribution: DistributionPayload | null;
   externalSyncToken: number;
-  selectedEchoId: string;
+  selectedEchoId: string | null;
   distributionFilter: DistributionFilter;
   loading: boolean;
   error: string | null;
@@ -46,7 +46,7 @@ interface AppState {
   patchCreateForm: (patch: Partial<CreateFormDraft>) => void;
   patchRecordPageDraft: (patch: Partial<RecordPageDraft>) => void;
   setDistributionFilter: (patch: Partial<DistributionFilter>) => void;
-  setSelectedEchoId: (id: string) => void;
+  setSelectedEchoId: (id: string | null) => void;
   notifyExternalSync: () => void;
   loadBootData: () => Promise<void>;
   refreshEchoes: () => Promise<void>;

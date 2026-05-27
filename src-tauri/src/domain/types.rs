@@ -403,6 +403,10 @@ pub struct PatternBlendWeights {
     pub motif_hit_bucket: String,
     pub active_stat_bucket: String,
     pub tier_signal_bucket: String,
+    pub bucket_scope: String,
+    pub bucket_sample_count: i64,
+    pub bucket_min_samples: i64,
+    pub bucket_trust: f64,
     pub base: f64,
     pub markov: f64,
     pub exact_motif: f64,
@@ -482,6 +486,22 @@ pub struct PatternShadowComparison {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PatternIntervalSignal {
+    pub key: String,
+    pub label: String,
+    pub horizon: i64,
+    pub target: String,
+    pub sample_count: i64,
+    pub baseline_rate: f64,
+    pub observed_rate: f64,
+    pub lift: f64,
+    pub confidence: f64,
+    pub direction: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DailyPatternDecisionReport {
     pub model_mode: String,
     pub game_day: String,
@@ -495,6 +515,7 @@ pub struct DailyPatternDecisionReport {
     pub backtest_summary: PatternBacktestSummary,
     pub state_summary: Option<PatternStateSummary>,
     pub shadow_comparison: Option<PatternShadowComparison>,
+    pub interval_signals: Vec<PatternIntervalSignal>,
     pub active_experts: Vec<String>,
     pub exact_patterns: Vec<DailyExactPatternRow>,
     pub shape_patterns: Vec<DailyShapePatternRow>,

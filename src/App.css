@@ -2240,6 +2240,188 @@ button:hover {
   overflow-y: auto;
 }
 
+.record-evidence-strip {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin-bottom: 8px;
+}
+
+.record-evidence-tile {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-height: 74px;
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(15, 23, 42, 0.06), transparent 58%),
+    #fff;
+}
+
+.record-evidence-tile::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: #94a3b8;
+}
+
+.record-evidence-good::before {
+  background: #16a34a;
+}
+
+.record-evidence-warn::before {
+  background: #f59e0b;
+}
+
+.record-evidence-bad::before {
+  background: #dc2626;
+}
+
+.record-evidence-neutral::before {
+  background: #64748b;
+}
+
+.record-evidence-kicker {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.record-evidence-tile > strong {
+  font-size: 18px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.record-evidence-tile div {
+  display: grid;
+  gap: 1px;
+}
+
+.record-evidence-tile div span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.record-evidence-tile div p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.record-continue-panel {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(160px, 0.8fr) minmax(120px, 1fr) minmax(150px, 0.8fr) minmax(220px, 1.4fr);
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 9px 10px 9px 13px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background:
+    linear-gradient(120deg, rgba(14, 165, 233, 0.08), transparent 45%),
+    #fff;
+}
+
+.record-continue-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: #64748b;
+}
+
+.record-continue-panel.record-evidence-good::before {
+  background: #16a34a;
+}
+
+.record-continue-panel.record-evidence-warn::before {
+  background: #f59e0b;
+}
+
+.record-continue-panel.record-evidence-bad::before {
+  background: #dc2626;
+}
+
+.record-continue-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.record-continue-main strong {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.record-continue-main p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.record-continue-meter {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+}
+
+.record-continue-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0f172a, #0ea5e9 55%, #22c55e);
+}
+
+.record-continue-stats,
+.record-continue-targets {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+.record-continue-stats {
+  color: var(--muted);
+}
+
+.record-continue-targets {
+  justify-content: flex-end;
+}
+
+.record-continue-target {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(14, 165, 233, 0.22);
+  background: rgba(14, 165, 233, 0.08);
+  color: var(--accent-ink);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .record-continue-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .record-continue-targets {
+    justify-content: flex-start;
+  }
+}
+
 .record-pattern-summary-grid {
   display: grid;
   gap: 8px;
@@ -2290,6 +2472,140 @@ button:hover {
 .record-pattern-chip-soft {
   white-space: normal;
   border-radius: 8px;
+}
+
+.record-pattern-chip-positive {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.record-pattern-chip-negative {
+  color: #991b1b;
+  background: #fee2e2;
+  border-color: #fecaca;
+}
+
+.record-pattern-chip-muted {
+  color: var(--muted);
+  background: #f1f5f9;
+}
+
+.record-pattern-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.record-pattern-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.record-pattern-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.record-pattern-toggle input {
+  margin: 0;
+}
+
+.record-interval-card {
+  background:
+    linear-gradient(135deg, rgba(15, 23, 42, 0.035), transparent 52%),
+    #fff;
+}
+
+.record-interval-signal-list {
+  display: grid;
+  gap: 6px;
+}
+
+.record-interval-signal {
+  display: grid;
+  gap: 4px;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.84);
+}
+
+.record-interval-signal-opportunity {
+  border-left-color: #16a34a;
+}
+
+.record-interval-signal-risk {
+  border-left-color: #dc2626;
+}
+
+.record-interval-signal-neutral {
+  border-left-color: var(--muted);
+}
+
+.record-interval-signal-head,
+.record-interval-signal-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+.record-interval-signal-head strong {
+  font-size: 12px;
+}
+
+.record-interval-signal-head span,
+.record-interval-signal-stats {
+  color: var(--muted);
+}
+
+.record-interval-signal-meter {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.record-interval-signal-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0f172a, #38bdf8);
+}
+
+.record-interval-signal p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.record-interval-empty {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: rgba(241, 245, 249, 0.72);
+}
+
+.record-interval-empty strong {
+  font-size: 12px;
+}
+
+.record-interval-empty span {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .record-pattern-table th {

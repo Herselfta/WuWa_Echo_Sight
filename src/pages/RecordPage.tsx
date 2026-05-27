@@ -113,6 +113,79 @@ function formatTierSuggestions(
   return suggestions.map((row) => `T${row.tierIndex} ${toPercent(row.probability)}`).join(" · ");
 }
 
+function formatSignedPercentDelta(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${toPercent(value)}`;
+}
+
+function formatSignedFixedDelta(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(3)}`;
+}
+
+function deltaChipClass(delta: number, higherIsBetter: boolean): string {
+  if (Math.abs(delta) < 0.0005) return "record-pattern-chip-muted";
+  const isBetter = higherIsBetter ? delta > 0 : delta < 0;
+  return isBetter ? "record-pattern-chip-positive" : "record-pattern-chip-negative";
+}
+
+function bucketTrustHint(trust: number): string {
+  if (trust < 0.35) return "样本少，更多依赖全局/先验";
+  if (trust < 0.7) return "局部桶部分可信";
+  return "局部桶样本较足";
+}
+
+function intervalSignalClass(direction: string): string {
+  if (direction === "opportunity") return "record-interval-signal-opportunity";
+  if (direction === "risk") return "record-interval-signal-risk";
+  return "record-interval-signal-neutral";
+}
+
+type EvidenceTone = "good" | "warn" | "bad" | "neutral";
+
+function evidenceToneClass(tone: EvidenceTone): string {
+  return `record-evidence-${tone}`;
+}
+
+function modelLiftVerdict(top1Lift: number, top3Lift: number): { tone: EvidenceTone; title: string; note: string } {
+  if (top1Lift >= 0.05 || top3Lift >= 0.08) {
+    return { tone: "good", title: "可用提升", note: "真实回测明显超过频率基线" };
+  }
+  if (top1Lift > 0 || top3Lift > 0) {
+    return { tone: "warn", title: "弱提升", note: "有信号，但不足以当强预测" };
+  }
+  return { tone: "bad", title: "无提升", note: "低于或持平频率基线" };
+}
+
+function shadowVerdict(top1Delta: number, logLossDelta: number): { tone: EvidenceTone; title: string; note: string } {
+  if (top1Delta > 0.01 && logLossDelta <= 0.005) {
+    return { tone: "good", title: "Shadow 可观察", note: "影子模型有候选价值" };
+  }
+  if (top1Delta < -0.01 || logLossDelta > 0.01) {
+    return { tone: "bad", title: "Shadow 失败", note: "不要切换 primary" };
+  }
+  return { tone: "neutral", title: "Shadow 持平", note: "暂无接管价值" };
+}
+
+function intervalEvidenceVerdict(count: number): { tone: EvidenceTone; title: string; note: string } {
+  if (count > 0) return { tone: "good", title: "有弱证据", note: `${count} 条历史触发器可参考` };
+  return { tone: "neutral", title: "无强证据", note: "当前触发器未过样本/lift 门槛" };
+}
+
+function continueTone(nextLift: number, remainingChance: number): EvidenceTone {
+  if (nextLift >= 0.02 || remainingChance >= 0.55) return "good";
+  if (nextLift <= -0.02 && remainingChance < 0.35) return "bad";
+  if (Math.abs(nextLift) < 0.01) return "neutral";
+  return "warn";
+}
+
+function continueVerdict(tone: EvidenceTone): string {
+  if (tone === "good") return "机会窗口";
+  if (tone === "bad") return "风险偏高";
+  if (tone === "warn") return "谨慎观察";
+  return "接近基线";
+}
+
 function parseGuessShapes(raw: string): string[] {
   const uniq = new Set<string>();
   for (const token of raw.split(/[\\s,，;；|]+/)) {
@@ -127,8 +200,9 @@ function parseGuessShapes(raw: string): string[] {
 const GAME_DAY_BOUNDARY_HOUR = 4;
 const DEFAULT_PATTERN_MANUAL_START_STR = "0";
 const DEFAULT_PATTERN_MANUAL_CYCLE_STR = "5";
-const DEFAULT_PATTERN_AUTO_MIN_LEN_STR = "3";
+const DEFAULT_PATTERN_AUTO_MIN_LEN_STR = "4";
 const DEFAULT_PATTERN_MANUAL_GUESS_STR = "AABCB, ABA";
+const DEFAULT_OPPORTUNITY_STAT_KEYS = ["crit_rate", "crit_dmg", "atk_pct", "energy_regen"];
 
 function formatLocalGameDay(date: Date): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -342,6 +416,7 @@ export function RecordPage() {
   const [patternManualCycleStr, setPatternManualCycleStr] = useState(DEFAULT_PATTERN_MANUAL_CYCLE_STR);
   const [patternManualGuessStr, setPatternManualGuessStr] = useState(DEFAULT_PATTERN_MANUAL_GUESS_STR);
   const [patternAutoMinLenStr, setPatternAutoMinLenStr] = useState(DEFAULT_PATTERN_AUTO_MIN_LEN_STR);
+  const [predictionExpectedOnly, setPredictionExpectedOnly] = useState(false);
 
   /* === misc === */
   const [saving, setSaving] = useState(false);
@@ -403,6 +478,107 @@ export function RecordPage() {
   );
 
   const selectedTierValue = selectedStat?.tiers.find((x) => x.tierIndex === tierIndex)?.valueScaled ?? 0;
+
+  const selectedExpectationStatKeys = useMemo(
+    () => new Set((selectedEcho?.expectations ?? []).map((item) => item.statKey)),
+    [selectedEcho],
+  );
+
+  const visiblePatternSuggestions = useMemo(() => {
+    const suggestions = patternDecision?.suggestions ?? [];
+    return suggestions.map((suggestion, index) => ({ suggestion, rank: index + 1 }))
+      .filter(({ suggestion }) => !predictionExpectedOnly || selectedExpectationStatKeys.size === 0 || selectedExpectationStatKeys.has(suggestion.statKey));
+  }, [patternDecision, predictionExpectedOnly, selectedExpectationStatKeys]);
+
+  const continueOpeningTargets = useMemo(() => {
+    const expectationKeys = [...selectedExpectationStatKeys];
+    const rawKeys = expectationKeys.length > 0 ? expectationKeys : DEFAULT_OPPORTUNITY_STAT_KEYS;
+    return rawKeys.filter((statKey) => !occupiedStats.has(statKey));
+  }, [occupiedStats, selectedExpectationStatKeys]);
+
+  const continueOpeningPanel = useMemo(() => {
+    if (!patternDecision) return null;
+    const suggestionMap = new Map(patternDecision.suggestions.map((suggestion) => [suggestion.statKey, suggestion]));
+    const targetRows = continueOpeningTargets.map((statKey) => {
+      const suggestion = suggestionMap.get(statKey);
+      return {
+        statKey,
+        displayName: suggestion?.displayName ?? statMap.get(statKey)?.displayName ?? statKey,
+        probability: suggestion?.probability ?? 0,
+        baseProbability: suggestion?.baseProbability ?? 0,
+      };
+    });
+    const targetMass = targetRows.reduce((sum, row) => sum + row.probability, 0);
+    const baseMass = targetRows.reduce((sum, row) => sum + row.baseProbability, 0);
+    const remainingSlots = selectedEcho ? Math.max(0, 5 - selectedEcho.openedSlotsCount) : 5;
+    const remainingChance = remainingSlots > 0 ? 1 - Math.pow(Math.max(0, 1 - targetMass), remainingSlots) : 0;
+    const baselineChance = remainingSlots > 0 ? 1 - Math.pow(Math.max(0, 1 - baseMass), remainingSlots) : 0;
+    const nextLift = targetMass - baseMass;
+    const tone = continueTone(nextLift, remainingChance);
+    return {
+      targetRows,
+      targetMass,
+      baseMass,
+      remainingSlots,
+      remainingChance,
+      baselineChance,
+      nextLift,
+      tone,
+      verdict: continueVerdict(tone),
+      sourceLabel: selectedExpectationStatKeys.size > 0 ? "期望词条" : "默认机会词条",
+    };
+  }, [continueOpeningTargets, patternDecision, selectedEcho, selectedExpectationStatKeys, statMap]);
+
+  const predictionEvidenceTiles = useMemo(() => {
+    if (!patternDecision) return [];
+    const top1Lift = patternDecision.backtestSummary.top1Accuracy - patternDecision.backtestSummary.freqTop1Accuracy;
+    const top3Lift = patternDecision.backtestSummary.top3Coverage - patternDecision.backtestSummary.freqTop3Coverage;
+    const lift = modelLiftVerdict(top1Lift, top3Lift);
+    const interval = intervalEvidenceVerdict(patternDecision.intervalSignals.length);
+    const shadow = patternDecision.shadowComparison
+      ? shadowVerdict(
+        patternDecision.shadowComparison.shadowTop1Accuracy - patternDecision.shadowComparison.primaryTop1Accuracy,
+        patternDecision.shadowComparison.shadowMeanLogLoss - patternDecision.shadowComparison.primaryMeanLogLoss,
+      )
+      : { tone: "neutral" as const, title: "无 Shadow", note: "当前只看主模型" };
+    const bucketTone: EvidenceTone = patternDecision.blendWeights.bucketTrust >= 0.7 ? "good" : patternDecision.blendWeights.bucketTrust >= 0.35 ? "warn" : "neutral";
+    return [
+      {
+        key: "lift",
+        kicker: "真实提升",
+        value: `${formatSignedPercentDelta(top1Lift)} / ${formatSignedPercentDelta(top3Lift)}`,
+        title: lift.title,
+        note: lift.note,
+        tone: lift.tone,
+      },
+      {
+        key: "bucket",
+        kicker: "样本桶",
+        value: toPercent(patternDecision.blendWeights.bucketTrust),
+        title: patternDecision.blendWeights.bucketScope,
+        note: `n=${patternDecision.blendWeights.bucketSampleCount}/${patternDecision.blendWeights.bucketMinSamples}`,
+        tone: bucketTone,
+      },
+      {
+        key: "interval",
+        kicker: "区间证据",
+        value: `${patternDecision.intervalSignals.length}`,
+        title: interval.title,
+        note: interval.note,
+        tone: interval.tone,
+      },
+      {
+        key: "shadow",
+        kicker: "影子模型",
+        value: patternDecision.shadowComparison
+          ? formatSignedPercentDelta(patternDecision.shadowComparison.shadowTop1Accuracy - patternDecision.shadowComparison.primaryTop1Accuracy)
+          : "—",
+        title: shadow.title,
+        note: shadow.note,
+        tone: shadow.tone,
+      },
+    ];
+  }, [patternDecision]);
 
   const distributionChartData = useMemo(() => {
     const rows = distribution?.rows ?? [];
@@ -610,7 +786,7 @@ export function RecordPage() {
   const loadPatternDecision = async (options?: { includeManual?: boolean }) => {
     setLoadingPatternDecision(true);
     try {
-      const autoMinLen = Math.max(2, Number(patternAutoMinLenStr) || 3);
+      const autoMinLen = Math.max(2, Number(patternAutoMinLenStr) || 4);
       const filter = {
         echoId: selectedEchoId || undefined,
         minLen: autoMinLen,
@@ -1560,8 +1736,8 @@ export function RecordPage() {
               <div className="record-echo-info-header" style={{ marginBottom: selectedEcho ? "4px" : "0" }}>
                 <select
                   className="record-echo-name-select"
-                  value={selectedEchoId}
-                  onChange={(e) => setSelectedEchoId(e.target.value)}
+                  value={selectedEchoId ?? ""}
+                  onChange={(e) => setSelectedEchoId(e.target.value || null)}
                 >
                   <option value="">请选择声骸</option>
                   {echoes
@@ -2217,6 +2393,47 @@ export function RecordPage() {
           </p>
           {patternDecision ? (
             <>
+              <div className="record-evidence-strip" aria-label="预测证据总览">
+                {predictionEvidenceTiles.map((tile) => (
+                  <div key={tile.key} className={`record-evidence-tile ${evidenceToneClass(tile.tone)}`}>
+                    <span className="record-evidence-kicker">{tile.kicker}</span>
+                    <strong>{tile.value}</strong>
+                    <div>
+                      <span>{tile.title}</span>
+                      <p>{tile.note}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {continueOpeningPanel ? (
+                <div className={`record-continue-panel ${evidenceToneClass(continueOpeningPanel.tone)}`}>
+                  <div className="record-continue-main">
+                    <span className="record-evidence-kicker">继续开洞</span>
+                    <strong>{continueOpeningPanel.verdict}</strong>
+                    <p>
+                      {continueOpeningPanel.sourceLabel} · 剩余 {continueOpeningPanel.remainingSlots} 孔 · 至少命中一次 {toPercent(continueOpeningPanel.remainingChance)}
+                    </p>
+                  </div>
+                  <div className="record-continue-meter" aria-hidden="true">
+                    <span style={{ width: `${Math.min(100, Math.max(0, continueOpeningPanel.remainingChance * 100))}%` }} />
+                  </div>
+                  <div className="record-continue-stats">
+                    <span>下孔目标 {toPercent(continueOpeningPanel.targetMass)}</span>
+                    <span>基线 {toPercent(continueOpeningPanel.baseMass)}</span>
+                    <span className={deltaChipClass(continueOpeningPanel.nextLift, true)}>{formatSignedPercentDelta(continueOpeningPanel.nextLift)}</span>
+                  </div>
+                  <div className="record-continue-targets">
+                    {continueOpeningPanel.targetRows.map((target) => (
+                      <span key={target.statKey} className="record-continue-target">
+                        {target.displayName} {toPercent(target.probability)}
+                      </span>
+                    ))}
+                    {continueOpeningPanel.targetRows.length === 0 ? (
+                      <span className="record-pattern-note">目标词条已被当前声骸占用，继续开洞不再追踪默认机会词条。</span>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
               <div className="record-pattern-summary-grid">
                 <div className="record-pattern-summary-card">
                   <span className="record-pattern-summary-title">模型摘要</span>
@@ -2289,10 +2506,16 @@ export function RecordPage() {
                     <span className="record-pattern-chip">motif {patternDecision.blendWeights.motifHitBucket}</span>
                     <span className="record-pattern-chip">active {patternDecision.blendWeights.activeStatBucket}</span>
                     <span className="record-pattern-chip">ctx {patternDecision.blendWeights.tierSignalBucket}</span>
+                    <span className="record-pattern-chip">scope {patternDecision.blendWeights.bucketScope}</span>
+                    <span className="record-pattern-chip">bucket n={patternDecision.blendWeights.bucketSampleCount}/{patternDecision.blendWeights.bucketMinSamples}</span>
+                    <span className="record-pattern-chip">trust {toPercent(patternDecision.blendWeights.bucketTrust)}</span>
                     {patternDecision.blendWeights.onlineAdjusted ? (
                       <span className="record-pattern-chip">online+</span>
                     ) : null}
                   </div>
+                  <p className="record-pattern-note">
+                    {bucketTrustHint(patternDecision.blendWeights.bucketTrust)}
+                  </p>
                   <div className="record-pattern-chip-list">
                     <span className="record-pattern-chip">B {toPercent(patternDecision.blendWeights.base)}</span>
                     <span className="record-pattern-chip">M {toPercent(patternDecision.blendWeights.markov)}</span>
@@ -2339,6 +2562,36 @@ export function RecordPage() {
                     ) : null}
                   </div>
                 ) : null}
+                <div className="record-pattern-summary-card record-interval-card">
+                  <span className="record-pattern-summary-title">区间证据</span>
+                  {patternDecision.intervalSignals.length > 0 ? (
+                    <div className="record-interval-signal-list">
+                      {patternDecision.intervalSignals.map((signal) => (
+                        <div key={signal.key} className={`record-interval-signal ${intervalSignalClass(signal.direction)}`}>
+                          <div className="record-interval-signal-head">
+                            <strong>{signal.label}</strong>
+                            <span>{signal.target}</span>
+                          </div>
+                          <div className="record-interval-signal-meter" aria-hidden="true">
+                            <span style={{ width: `${Math.min(100, Math.max(0, signal.confidence * 100))}%` }} />
+                          </div>
+                          <div className="record-interval-signal-stats">
+                            <span>n={signal.sampleCount}</span>
+                            <span>{toPercent(signal.baselineRate)} → {toPercent(signal.observedRate)}</span>
+                            <span className={deltaChipClass(signal.lift, true)}>{formatSignedPercentDelta(signal.lift)}</span>
+                          </div>
+                          <p>{signal.note}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="record-interval-empty">
+                      <strong>当前无强区间证据</strong>
+                      <span>已扫描历史同类触发器；当前上下文没有满足 n≥20 且 |lift|≥4pp 的信号。</span>
+                    </div>
+                  )}
+                  <p className="record-pattern-note">仅作历史弱证据提示，不改变建议概率。</p>
+                </div>
                 {patternDecision.shadowComparison ? (
                   <div className="record-pattern-summary-card">
                     <span className="record-pattern-summary-title">Shadow 对照</span>
@@ -2349,18 +2602,47 @@ export function RecordPage() {
                       <span className="record-pattern-chip">
                         {formatPatternModelMode(patternDecision.shadowComparison.shadowModelMode)} Top1 {toPercent(patternDecision.shadowComparison.shadowTop1Accuracy)}
                       </span>
+                      <span className={`record-pattern-chip ${deltaChipClass(patternDecision.shadowComparison.shadowTop1Accuracy - patternDecision.shadowComparison.primaryTop1Accuracy, true)}`}>
+                        ΔTop1 {formatSignedPercentDelta(patternDecision.shadowComparison.shadowTop1Accuracy - patternDecision.shadowComparison.primaryTop1Accuracy)}
+                      </span>
                       <span className="record-pattern-chip">
                         J {toPercent(patternDecision.shadowComparison.primaryJointTop1Accuracy)} → {toPercent(patternDecision.shadowComparison.shadowJointTop1Accuracy)}
+                      </span>
+                      <span className={`record-pattern-chip ${deltaChipClass(patternDecision.shadowComparison.shadowJointTop1Accuracy - patternDecision.shadowComparison.primaryJointTop1Accuracy, true)}`}>
+                        ΔJ {formatSignedPercentDelta(patternDecision.shadowComparison.shadowJointTop1Accuracy - patternDecision.shadowComparison.primaryJointTop1Accuracy)}
                       </span>
                       <span className="record-pattern-chip">
                         LogLoss {patternDecision.shadowComparison.primaryMeanLogLoss.toFixed(3)} → {patternDecision.shadowComparison.shadowMeanLogLoss.toFixed(3)}
                       </span>
+                      <span className={`record-pattern-chip ${deltaChipClass(patternDecision.shadowComparison.shadowMeanLogLoss - patternDecision.shadowComparison.primaryMeanLogLoss, false)}`}>
+                        ΔLogLoss {formatSignedFixedDelta(patternDecision.shadowComparison.shadowMeanLogLoss - patternDecision.shadowComparison.primaryMeanLogLoss)}
+                      </span>
                       <span className="record-pattern-chip">
                         J-LogLoss {patternDecision.shadowComparison.primaryMeanJointLogLoss.toFixed(3)} → {patternDecision.shadowComparison.shadowMeanJointLogLoss.toFixed(3)}
                       </span>
+                      <span className={`record-pattern-chip ${deltaChipClass(patternDecision.shadowComparison.shadowMeanJointLogLoss - patternDecision.shadowComparison.primaryMeanJointLogLoss, false)}`}>
+                        ΔJ-LogLoss {formatSignedFixedDelta(patternDecision.shadowComparison.shadowMeanJointLogLoss - patternDecision.shadowComparison.primaryMeanJointLogLoss)}
+                      </span>
                     </div>
+                    <p className="record-pattern-note">
+                      Shadow 仅用于预测对照；除非模型模式为 V3 primary，否则不改变当前输出。
+                    </p>
                   </div>
                 ) : null}
+              </div>
+              <div className="record-pattern-toolbar">
+                <label className="record-pattern-toggle">
+                  <input
+                    type="checkbox"
+                    checked={predictionExpectedOnly}
+                    disabled={selectedExpectationStatKeys.size === 0}
+                    onChange={(e) => setPredictionExpectedOnly(e.target.checked)}
+                  />
+                  只显示期望词条
+                </label>
+                <span className="record-pattern-note">
+                  {selectedExpectationStatKeys.size > 0 ? "仅过滤建议表显示，不改变预测概率或排序。" : "当前声骸未设置期望词条，显示全部建议。"}
+                </span>
               </div>
               <div className="record-dist-table-wrap">
                 <table className="table compact-table record-pattern-table">
@@ -2376,18 +2658,18 @@ export function RecordPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {patternDecision.suggestions.map((s, idx) => (
+                    {visiblePatternSuggestions.map(({ suggestion: s, rank }) => (
                       <tr key={s.statKey}>
                         <td>
                           <div className="record-pattern-name-cell">
                             <strong>{s.displayName}</strong>
-                            <span className="hint">#{idx + 1}</span>
+                            <span className="hint">#{rank}</span>
                           </div>
                         </td>
                         <td>
                           <div className="record-pattern-metric-stack">
                             <strong>{toPercent(s.jointProbability)}</strong>
-                            <span className="hint">#{idx + 1}</span>
+                            <span className="hint">#{rank}</span>
                           </div>
                         </td>
                         <td>
@@ -2442,8 +2724,12 @@ export function RecordPage() {
                         </td>
                       </tr>
                     ))}
-                    {patternDecision.suggestions.length === 0 ? (
-                      <tr><td colSpan={7} className="chain-empty">暂无可用建议</td></tr>
+                    {visiblePatternSuggestions.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="chain-empty">
+                          {patternDecision.suggestions.length === 0 ? "暂无可用建议" : "期望过滤后暂无匹配建议"}
+                        </td>
+                      </tr>
                     ) : null}
                   </tbody>
                 </table>

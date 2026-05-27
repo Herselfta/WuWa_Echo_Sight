@@ -13,7 +13,7 @@ use crate::domain::types::{
     AdaptiveNextSuggestion, DailyExactPatternRow, DailyPatternDecisionFilter,
     DailyPatternDecisionReport, DailyShapePatternRow, ManualCycleSuggestion,
     ManualGuessVerificationRow, ManualPatternSummary, PatternBenchmarkRow, PatternBacktestSummary,
-    PatternBlendWeights,
+    PatternBlendWeights, PatternIntervalSignal,
 };
 use crate::stats::wilson_interval;
 
@@ -916,6 +916,10 @@ fn empty_pattern_blend_weights() -> PatternBlendWeights {
         motif_hit_bucket: "none".to_string(),
         active_stat_bucket: "n/a".to_string(),
         tier_signal_bucket: "n/a".to_string(),
+        bucket_scope: "fallback".to_string(),
+        bucket_sample_count: 0,
+        bucket_min_samples: 0,
+        bucket_trust: 0.0,
         base: 1.0,
         markov: 0.0,
         exact_motif: 0.0,
@@ -1140,6 +1144,10 @@ fn internal_weights_to_public(
     weights: InternalBlendWeights,
     source: &str,
     bucket: &PredictionBucket,
+    bucket_scope: &str,
+    bucket_sample_count: usize,
+    bucket_min_samples: usize,
+    bucket_trust: f64,
     online_adjusted: bool,
 ) -> PatternBlendWeights {
     PatternBlendWeights {
@@ -1149,6 +1157,10 @@ fn internal_weights_to_public(
         motif_hit_bucket: bucket.motif_hit_bucket.clone(),
         active_stat_bucket: bucket.active_stat_bucket.clone(),
         tier_signal_bucket: bucket.tier_signal_bucket.clone(),
+        bucket_scope: bucket_scope.to_string(),
+        bucket_sample_count: bucket_sample_count as i64,
+        bucket_min_samples: bucket_min_samples as i64,
+        bucket_trust: bucket_trust.clamp(0.0, 1.0),
         base: weights.base,
         markov: weights.markov,
         exact_motif: weights.exact_motif,
@@ -1179,6 +1191,168 @@ fn public_state_summary(
         reversion_top_stats: features.reversion_top_stats.clone(),
     }
 }
+
+fn interval_trigger_keys(events: &[crate::pattern_state::PatternEventLite], stat_keys: &[String]) -> Vec<(String, String)> {
+    let mut triggers = Vec::new();
+    let Some(last) = events.last() else {
+        return triggers;
+    };
+    if matches!(last.tier_index, 1 | 8) {
+        triggers.push(("last_extreme".to_string(), "极值档触发".to_string()));
+    }
+    if let Some(prev) = events.get(events.len().saturating_sub(2)) {
+        if prev.stat_key == last.stat_key {
+            let diff = (prev.tier_index - last.tier_index).abs();
+            if diff == 0 {
+                triggers.push(("same_stat_stop".to_string(), "同词条停档".to_string()));
+            } else if diff == 1 {
+                triggers.push(("same_stat_step".to_string(), "同词条连档".to_string()));
+            } else {
+                triggers.push(("same_stat_jump".to_string(), "同词条跳档".to_string()));
+            }
+        }
+        let last_category = crate::pattern_state::stat_category(&last.stat_key);
+        if crate::pattern_state::stat_category(&prev.stat_key) == last_category {
+            triggers.push((format!("same_cat2_{last_category}"), format!("连续同类 {last_category}")));
+        }
+    }
+    let recent8 = if events.len() > 8 { &events[events.len() - 8..] } else { events };
+    let active_recent8 = recent8.iter().map(|event| event.stat_key.as_str()).collect::<HashSet<_>>().len();
+    if active_recent8 <= 5 {
+        triggers.push(("low_active".to_string(), "低活跃窗口".to_string()));
+    }
+    let features = crate::pattern_state::compute_sequence_state_features(events, stat_keys);
+    if features.zone_candidate != "mixed" && features.zone_confidence >= 0.5 {
+        triggers.push((format!("zone_{}", features.zone_candidate), format!("{} 候选", features.zone_candidate)));
+    }
+    triggers
+}
+
+fn future_has_category(
+    events: &[BacktestEventLite],
+    idx: usize,
+    horizon: usize,
+    target_category: &str,
+) -> bool {
+    let end = (idx + 1 + horizon).min(events.len());
+    events[idx + 1..end]
+        .iter()
+        .any(|event| crate::pattern_state::stat_category(&event.stat_key) == target_category)
+}
+
+fn build_interval_signals(
+    conn: &Connection,
+    current_events: &[crate::pattern_state::PatternEventLite],
+    stat_keys: &[String],
+) -> Result<Vec<PatternIntervalSignal>, String> {
+    let active_triggers = interval_trigger_keys(current_events, stat_keys);
+    if active_triggers.is_empty() {
+        return Ok(Vec::new());
+    }
+    let active_trigger_map = active_triggers.into_iter().collect::<HashMap<_, _>>();
+    let history = load_recent_global_backtest_events(conn, 2400)?;
+    let horizon = 5usize;
+    if history.len() <= horizon + 32 {
+        return Ok(Vec::new());
+    }
+
+    let targets = [
+        ("crit", "未来5手暴区"),
+        ("dmg_bonus", "未来5手伤害加成"),
+    ];
+    let mut baseline = HashMap::<&str, (usize, usize)>::new();
+    let mut trigger_counts = HashMap::<(String, &str), (usize, usize)>::new();
+
+    for idx in 8..history.len().saturating_sub(horizon) {
+        let prefix_events = history[..=idx]
+            .iter()
+            .map(|event| crate::pattern_state::PatternEventLite {
+                stat_key: event.stat_key.clone(),
+                tier_index: event.tier_index,
+                analysis_seq: event.analysis_seq,
+            })
+            .collect::<Vec<_>>();
+        let trigger_keys = interval_trigger_keys(&prefix_events, stat_keys)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>();
+        for (target, _) in targets {
+            let hit = future_has_category(&history, idx, horizon, target);
+            let base_entry = baseline.entry(target).or_insert((0, 0));
+            base_entry.1 += 1;
+            if hit {
+                base_entry.0 += 1;
+            }
+            for trigger_key in &trigger_keys {
+                if !active_trigger_map.contains_key(trigger_key) {
+                    continue;
+                }
+                let entry = trigger_counts.entry((trigger_key.clone(), target)).or_insert((0, 0));
+                entry.1 += 1;
+                if hit {
+                    entry.0 += 1;
+                }
+            }
+        }
+    }
+
+    let mut signals = Vec::new();
+    for ((trigger_key, target), (hits, samples)) in trigger_counts {
+        if samples < 20 {
+            continue;
+        }
+        let Some((baseline_hits, baseline_samples)) = baseline.get(target).copied() else {
+            continue;
+        };
+        if baseline_samples == 0 {
+            continue;
+        }
+        let baseline_rate = baseline_hits as f64 / baseline_samples as f64;
+        let observed_rate = hits as f64 / samples as f64;
+        let lift = observed_rate - baseline_rate;
+        if lift.abs() < 0.04 {
+            continue;
+        }
+        let confidence = ((samples as f64 / 120.0).sqrt().min(1.0) * (lift.abs() / 0.18).min(1.0)).clamp(0.0, 1.0);
+        let trigger_label = active_trigger_map
+            .get(&trigger_key)
+            .cloned()
+            .unwrap_or_else(|| trigger_key.clone());
+        let target_label = targets
+            .iter()
+            .find(|(key, _)| *key == target)
+            .map(|(_, label)| *label)
+            .unwrap_or(target);
+        let direction = if lift > 0.0 { "opportunity" } else { "risk" }.to_string();
+        let note = if lift > 0.0 {
+            format!("历史同触发后 {target_label} 高于基线 {:.1} 个百分点", lift * 100.0)
+        } else {
+            format!("历史同触发后 {target_label} 低于基线 {:.1} 个百分点", lift.abs() * 100.0)
+        };
+        signals.push(PatternIntervalSignal {
+            key: format!("{trigger_key}:{target}"),
+            label: trigger_label,
+            horizon: horizon as i64,
+            target: target_label.to_string(),
+            sample_count: samples as i64,
+            baseline_rate,
+            observed_rate,
+            lift,
+            confidence,
+            direction,
+            note,
+        });
+    }
+    signals.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| b.lift.abs().partial_cmp(&a.lift.abs()).unwrap_or(Ordering::Equal))
+    });
+    signals.truncate(4);
+    Ok(signals)
+}
+
 
 fn push_label(map: &mut HashMap<String, Vec<String>>, stat_key: &str, label: String) {
     map.entry(stat_key.to_string()).or_default().push(label);
@@ -2070,6 +2244,40 @@ fn select_v2_weights_for_bucket(
     )
 }
 
+fn resolve_bucket_reliability(
+    model: &TrainedAdaptiveModel,
+    bucket: &PredictionBucket,
+) -> (&'static str, usize, usize, f64) {
+    let fit_min_samples = bucket_fit_min_samples(model.bucket_min_samples);
+    let mut selected = None::<(BucketScope, usize)>;
+
+    for scope in BucketScope::blend_scopes() {
+        let scoped_key = bucket.scoped_key(scope);
+        let Some((_, local_sample_count)) = model.bucket_weights.get(&scoped_key) else {
+            continue;
+        };
+        if *local_sample_count < fit_min_samples {
+            continue;
+        }
+        selected = Some((scope, *local_sample_count));
+    }
+
+    if let Some((scope, sample_count)) = selected {
+        let trust = bucket_scope_trust(sample_count, model.bucket_min_samples, scope);
+        return (scope.source_label(), sample_count, fit_min_samples, trust);
+    }
+
+    let global_sample_count = model.backtest_summary.sample_count.max(0) as usize;
+    if global_sample_count >= fit_min_samples {
+        let trust = (global_sample_count as f64
+            / (global_sample_count as f64 + model.bucket_min_samples.max(1) as f64))
+            .clamp(0.0, 0.92);
+        ("global", global_sample_count, fit_min_samples, trust)
+    } else {
+        ("fallback", global_sample_count, fit_min_samples, 0.0)
+    }
+}
+
 fn select_bucket_champion_route_raw(
     global_route: BucketChampionRoute,
     bucket_champions: &HashMap<String, (BucketChampionRoute, usize)>,
@@ -2323,48 +2531,6 @@ fn evaluate_v2_model_samples(
             &sample.components,
         );
         let mut mixed = blend_v2_probs(stat_keys, &sample.components, duel_adjusted);
-        apply_blocked_stat_mask(&mut mixed, &sample.blocked_stats);
-        let actual_prob = mixed
-            .get(&sample.actual_stat_key)
-            .copied()
-            .unwrap_or(1e-9)
-            .clamp(1e-9, 1.0);
-        true_prob_sum += actual_prob;
-        log_loss_sum += -actual_prob.ln();
-        if top_prediction_key(&mixed) == Some(sample.actual_stat_key.as_str()) {
-            top1_hits += 1.0;
-        }
-        let ranked = sorted_prediction_ranking(&mixed);
-        if ranked
-            .iter()
-            .take(3)
-            .any(|(stat_key, _)| stat_key.as_str() == sample.actual_stat_key.as_str())
-        {
-            top3_hits += 1.0;
-        }
-    }
-
-    finalize_flat_metrics(
-        samples.len() as f64,
-        top1_hits,
-        top3_hits,
-        true_prob_sum,
-        log_loss_sum,
-    )
-}
-
-fn evaluate_v2_fixed_weights(
-    samples: &[BacktestSample],
-    stat_keys: &[String],
-    weights: InternalBlendWeights,
-) -> FlatBacktestMetrics {
-    let mut top1_hits = 0.0;
-    let mut top3_hits = 0.0;
-    let mut true_prob_sum = 0.0;
-    let mut log_loss_sum = 0.0;
-
-    for sample in samples {
-        let mut mixed = blend_v2_probs(stat_keys, &sample.components, weights);
         apply_blocked_stat_mask(&mut mixed, &sample.blocked_stats);
         let actual_prob = mixed
             .get(&sample.actual_stat_key)
@@ -4423,16 +4589,8 @@ fn run_walk_forward_backtest(
         );
         let top1_bucket_weight =
             fit_v2_weights_for_samples(bucket_samples, baseline_blend, V2BlendObjective::Top1);
-        let calibrated_bucket_metrics =
-            evaluate_v2_fixed_weights(bucket_samples, stat_keys, calibrated_bucket_weight);
-        let top1_bucket_metrics =
-            evaluate_v2_fixed_weights(bucket_samples, stat_keys, top1_bucket_weight);
-        let selected_bucket_objective =
-            choose_v2_objective(calibrated_bucket_metrics, top1_bucket_metrics);
-        let selected_bucket_weight = match selected_bucket_objective {
-            V2BlendObjective::Calibrated => calibrated_bucket_weight,
-            V2BlendObjective::Top1 => top1_bucket_weight,
-        };
+        let selected_bucket_objective = V2BlendObjective::Calibrated;
+        let selected_bucket_weight = calibrated_bucket_weight;
         calibrated_bucket_weights.insert(
             bucket_key.clone(),
             (
@@ -4634,12 +4792,12 @@ fn run_walk_forward_backtest(
         current_row.key = if champion_routing_enabled {
             "model_bucket_champion".to_string()
         } else {
-            "model_bucket_adaptive".to_string()
+            "model_bucket_calibrated".to_string()
         };
         current_row.label = if champion_routing_enabled {
             "当前模型 (按桶冠军切路)".to_string()
         } else {
-            "当前模型 (按桶择优)".to_string()
+            "当前模型 (bucket 校准优先)".to_string()
         };
     }
     let mut insert_idx = 1usize;
@@ -4938,7 +5096,7 @@ pub fn get_daily_pattern_decision_internal(
             .to_string(),
     ];
 
-    let min_len = filter.min_len.unwrap_or(3).clamp(2, 12) as usize;
+    let min_len = filter.min_len.unwrap_or(4).clamp(2, 12) as usize;
     let max_len = filter.max_len.unwrap_or(7).clamp(min_len as i64, 16) as usize;
     let min_support = filter.min_support.unwrap_or(2).clamp(1, 50);
     let max_order = filter.max_order.unwrap_or(5).clamp(1, 8) as usize;
@@ -5022,27 +5180,11 @@ pub fn get_daily_pattern_decision_internal(
             global_weights.auto_cycle * 100.0,
         ));
         let fit_min_samples = bucket_fit_min_samples(bucket_min_samples);
-        let top1_bucket_count = v2_model
-            .bucket_objectives
-            .values()
-            .filter(|(objective, sample_count)| {
-                *objective == V2BlendObjective::Top1 && *sample_count >= fit_min_samples
-            })
-            .count();
         let calibrated_bucket_count = v2_model
             .bucket_objectives
             .values()
             .filter(|(objective, sample_count)| {
                 *objective == V2BlendObjective::Calibrated
-                    && *sample_count >= fit_min_samples
-            })
-            .count();
-        let exact_top1_bucket_count = v2_model
-            .bucket_objectives
-            .iter()
-            .filter(|(key, (objective, sample_count))| {
-                !key.contains(':')
-                    && *objective == V2BlendObjective::Top1
                     && *sample_count >= fit_min_samples
             })
             .count();
@@ -5062,11 +5204,10 @@ pub fn get_daily_pattern_decision_internal(
             .count();
         if !v2_model.bucket_objectives.is_empty() {
             notes.push(format!(
-                "V2 bucket 目标分流：5D Top1优先 {} 桶 · 5D 校准优先 {} 桶 · 父桶策略 {} 组（总有效桶 {}）",
-                exact_top1_bucket_count,
+                "V2 bucket 权重采用校准优先：5D 校准桶 {} 个 · 父桶策略 {} 组（有效桶 {}）",
                 exact_calibrated_bucket_count,
                 parent_bucket_count,
-                top1_bucket_count + calibrated_bucket_count
+                calibrated_bucket_count
             ));
             notes.push("V2 已启用分层桶回退：5D/4D/3D 桶会按样本量收缩混合，再回落到全局权重。".to_string());
             notes.push("V2 已启用低信号桶专家负反馈：会额外压低短 Markov 与弱 Motif 在噪声上下文里的权重。".to_string());
@@ -5169,6 +5310,7 @@ pub fn get_daily_pattern_decision_internal(
             backtest_summary: v2_model.backtest_summary.clone(),
             state_summary: None,
             shadow_comparison: None,
+            interval_signals: Vec::new(),
             active_experts: Vec::new(),
             exact_patterns: Vec::new(),
             shape_patterns: Vec::new(),
@@ -5208,6 +5350,7 @@ pub fn get_daily_pattern_decision_internal(
             backtest_summary: v2_model.backtest_summary.clone(),
             state_summary: None,
             shadow_comparison: None,
+            interval_signals: Vec::new(),
             active_experts: Vec::new(),
             exact_patterns: Vec::new(),
             shape_patterns: Vec::new(),
@@ -5800,8 +5943,18 @@ pub fn get_daily_pattern_decision_internal(
         apply_online_adjustment(conn, &v2_components.bucket, selected_weights_duel, &v2_components)?;
     let selected_weights =
         cap_base_weight(resolve_active_v2_weights(selected_weights_online, &v2_components), &v2_components);
-    let mut blend_weights =
-        internal_weights_to_public(selected_weights, weight_source, &v2_components.bucket, online_adjusted);
+    let (bucket_scope, bucket_sample_count, bucket_min_samples, bucket_trust) =
+        resolve_bucket_reliability(&v2_model, &v2_components.bucket);
+    let mut blend_weights = internal_weights_to_public(
+        selected_weights,
+        weight_source,
+        &v2_components.bucket,
+        bucket_scope,
+        bucket_sample_count,
+        bucket_min_samples,
+        bucket_trust,
+        online_adjusted,
+    );
     let mut active_experts = active_v2_experts(&v2_components, &selected_weights);
     let (bucket_champion_route, champion_source) =
         select_bucket_champion_route(&v2_model, &v2_components.bucket);
@@ -6025,10 +6178,16 @@ pub fn get_daily_pattern_decision_internal(
             resolve_active_v2_weights(v3_weights_online, &v3_components),
             &v3_components,
         );
+        let (v3_bucket_scope, v3_bucket_sample_count, v3_bucket_min_samples, v3_bucket_trust) =
+            resolve_bucket_reliability(v3_model, &v3_components.bucket);
         let v3_blend_weights = internal_weights_to_public(
             v3_selected_weights,
             v3_weight_source,
             &v3_components.bucket,
+            v3_bucket_scope,
+            v3_bucket_sample_count,
+            v3_bucket_min_samples,
+            v3_bucket_trust,
             v3_online_adjusted,
         );
         let v3_active_experts = active_v2_experts(&v3_components, &v3_selected_weights);
@@ -6222,9 +6381,9 @@ pub fn get_daily_pattern_decision_internal(
     }
     if report_backtest_summary.sample_count > 0 {
         if let Some(current_row) = report_backtest_summary.benchmarks.first() {
-            if current_row.key == "model_bucket_adaptive" {
+            if current_row.key == "model_bucket_calibrated" {
                 notes.push(
-                    "V2 当前采用按 bucket 目标择优；全桶 Top1 优先与全桶校准优先会继续并行回测。"
+                    "V2 当前采用 bucket 校准优先；Top1 优先作为对照继续并行回测。"
                         .to_string(),
                 );
             }
@@ -6241,7 +6400,7 @@ pub fn get_daily_pattern_decision_internal(
         if let Some(best_benchmark) = report_backtest_summary
             .benchmarks
             .iter()
-            .filter(|row| row.key != "model_bucket_adaptive")
+            .filter(|row| row.key != "model_bucket_calibrated")
             .min_by(|a, b| {
                 a.mean_log_loss
                     .partial_cmp(&b.mean_log_loss)
@@ -6258,6 +6417,8 @@ pub fn get_daily_pattern_decision_internal(
             }
         }
     }
+
+    let interval_signals = build_interval_signals(conn, &day_events, &stat_keys)?;
 
     if !contextual_prediction_mode && !v3_enabled {
         let mut logging_suggestions = if report_model_mode == "adaptive_v2" {
@@ -6330,6 +6491,7 @@ pub fn get_daily_pattern_decision_internal(
         backtest_summary: report_backtest_summary,
         state_summary: report_state_summary,
         shadow_comparison: report_shadow_comparison,
+        interval_signals,
         active_experts: report_active_experts,
         exact_patterns,
         shape_patterns,
@@ -6438,4 +6600,293 @@ pub fn invalidate_unresolved_prediction_runs_for_game_day(
     )
     .map_err(|e| format!("failed to invalidate unresolved pattern prediction runs: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_database;
+    use rusqlite::{params, Connection};
+    use std::fs;
+    use std::path::PathBuf;
+
+    const TEST_GAME_DAY: &str = "2026-05-26";
+
+    fn temp_db_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "wuwa-echo-sight-{name}-{}.sqlite3",
+            Uuid::new_v4()
+        ))
+    }
+
+    fn set_setting(conn: &Connection, key: &str, value: &str) {
+        conn.execute(
+            "INSERT INTO app_settings(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )
+        .expect("setting should be written");
+    }
+
+    fn seed_repeating_opening_sequence(conn: &mut Connection, echo_count: usize) {
+        let cycle = [
+            ("crit_rate", 1_i64),
+            ("crit_dmg", 1_i64),
+            ("energy_regen", 1_i64),
+            ("atk_pct", 1_i64),
+            ("hp_pct", 1_i64),
+        ];
+        let tx = conn.transaction().expect("transaction should start");
+        let mut seq = 0_i64;
+
+        for echo_idx in 0..echo_count {
+            let echo_id = format!("metric-test-echo-{echo_idx:03}");
+            tx.execute(
+                "INSERT INTO echoes(
+                    echo_id, nickname, main_stat_key, cost_class, status,
+                    opened_slots_count, created_at, updated_at
+                 ) VALUES (?1, ?2, 'atk_pct', 1, 'tracking', 5, ?3, ?3)",
+                params![&echo_id, format!("metric echo {echo_idx}"), "2026-05-26T12:00:00+08:00"],
+            )
+            .expect("echo should insert");
+
+            for (slot_idx, &(stat_key, tier_index)) in cycle.iter().enumerate() {
+                seq += 1;
+                let value_scaled = tx
+                    .query_row(
+                        "SELECT value_scaled FROM stat_tiers WHERE stat_key = ?1 AND tier_index = ?2",
+                        params![stat_key, tier_index],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .expect("tier value should exist");
+                tx.execute(
+                    "INSERT INTO ordered_events(
+                        event_id, echo_id, slot_no, stat_key, tier_index, value_scaled,
+                        event_time, created_seq, analysis_seq, game_day, created_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?7)",
+                    params![
+                        format!("metric-test-event-{seq:04}"),
+                        &echo_id,
+                        slot_idx as i64 + 1,
+                        stat_key,
+                        tier_index,
+                        value_scaled,
+                        "2026-05-26T12:00:00+08:00",
+                        seq,
+                        TEST_GAME_DAY,
+                    ],
+                )
+                .expect("event should insert");
+            }
+        }
+
+        tx.commit().expect("seed transaction should commit");
+    }
+
+    fn assert_unit_metric(name: &str, value: f64) {
+        assert!(value.is_finite(), "{name} should be finite, got {value}");
+        assert!((0.0..=1.0).contains(&value), "{name} should be in [0, 1], got {value}");
+    }
+
+    #[test]
+    fn prediction_metrics_are_validated_from_seeded_backend_events() {
+        let db_path = temp_db_path("prediction-metrics");
+        init_database(&db_path).expect("database should initialize");
+        let mut conn = Connection::open(&db_path).expect("database should open");
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .expect("foreign keys should enable");
+        set_setting(&conn, "analysis_window", "400");
+        set_setting(&conn, "pattern_backtest_samples", "192");
+        set_setting(&conn, "pattern_bucket_min_samples", "4");
+        set_setting(&conn, "pattern_model_mode", "adaptive_v3_shadow");
+        seed_repeating_opening_sequence(&mut conn, 80);
+
+        let report = get_daily_pattern_decision_internal(
+            &conn,
+            &DailyPatternDecisionFilter {
+                game_day: Some(TEST_GAME_DAY.to_string()),
+                min_len: Some(2),
+                max_len: Some(6),
+                min_support: Some(2),
+                max_order: Some(5),
+                top_k: Some(10),
+                ..DailyPatternDecisionFilter::default()
+            },
+        )
+        .expect("decision report should be computed from backend data");
+
+        let metrics = &report.backtest_summary;
+        println!(
+            "prediction metrics: samples={} top1={:.3} top3={:.3} logloss={:.3} joint_top1={:.3} joint_top3={:.3} joint_logloss={:.3} random_top1={:.3} random_logloss={:.3}",
+            metrics.sample_count,
+            metrics.top1_accuracy,
+            metrics.top3_coverage,
+            metrics.mean_log_loss,
+            metrics.joint_top1_accuracy,
+            metrics.joint_top3_coverage,
+            metrics.mean_joint_log_loss,
+            metrics.random_top1_accuracy,
+            metrics.random_mean_log_loss,
+        );
+        assert_eq!(report.total_events, 400);
+        assert!(metrics.sample_count >= 120, "expected many backend backtest samples, got {}", metrics.sample_count);
+        assert_unit_metric("top1_accuracy", metrics.top1_accuracy);
+        assert_unit_metric("top3_coverage", metrics.top3_coverage);
+        assert_unit_metric("joint_top1_accuracy", metrics.joint_top1_accuracy);
+        assert_unit_metric("joint_top3_coverage", metrics.joint_top3_coverage);
+        assert!(metrics.mean_log_loss.is_finite(), "mean_log_loss should be finite");
+        assert!(metrics.mean_joint_log_loss.is_finite(), "mean_joint_log_loss should be finite");
+        assert!(metrics.top1_accuracy > metrics.random_top1_accuracy + 0.25);
+        assert!(metrics.mean_log_loss < metrics.random_mean_log_loss);
+        assert!(metrics.top1_accuracy >= 0.80, "expected deterministic sequence Top1 accuracy, got {:.3}", metrics.top1_accuracy);
+        assert!(metrics.joint_top3_coverage >= metrics.joint_top1_accuracy);
+        assert!(!metrics.benchmarks.is_empty(), "benchmark rows should be produced");
+
+        let shadow = report
+            .shadow_comparison
+            .as_ref()
+            .expect("adaptive_v3_shadow should produce backend shadow metrics");
+        assert_unit_metric("shadow_top1_accuracy", shadow.shadow_top1_accuracy);
+        assert_unit_metric("shadow_joint_top1_accuracy", shadow.shadow_joint_top1_accuracy);
+        assert!(shadow.shadow_mean_log_loss.is_finite());
+        assert!(shadow.shadow_mean_joint_log_loss.is_finite());
+        assert!((shadow.primary_top1_accuracy - metrics.top1_accuracy).abs() < 1e-9);
+        assert!((shadow.primary_mean_log_loss - metrics.mean_log_loss).abs() < 1e-9);
+        assert!(report.blend_weights.bucket_sample_count >= report.blend_weights.bucket_min_samples);
+        assert!(report.blend_weights.bucket_trust > 0.0);
+        assert!(!report.suggestions.is_empty(), "backend suggestions should be produced");
+
+        drop(conn);
+        let _ = fs::remove_file(&db_path);
+        let _ = fs::remove_file(db_path.with_extension("sqlite3-wal"));
+        let _ = fs::remove_file(db_path.with_extension("sqlite3-shm"));
+    }
+
+    #[test]
+    #[ignore]
+    fn local_prediction_metrics_report() {
+        let db_path = std::env::var("WUWA_ECHO_SIGHT_DB")
+            .expect("set WUWA_ECHO_SIGHT_DB to a copied local sqlite database path");
+        let conn = Connection::open(&db_path).expect("local metrics database should open");
+        set_setting(&conn, "pattern_model_mode", "adaptive_v3_shadow");
+        set_setting(&conn, "pattern_backtest_samples", "192");
+
+        let event_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ordered_events", [], |row| row.get(0))
+            .expect("event count should query");
+        let day_range: (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT MIN(game_day), MAX(game_day) FROM ordered_events",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("day range should query");
+        let mut best_report = None;
+        let mut best_score = f64::NEG_INFINITY;
+        for min_len in [2_i64, 3, 4] {
+            for max_order in [2_i64, 3, 5, 8] {
+                let report = get_daily_pattern_decision_internal(
+                    &conn,
+                    &DailyPatternDecisionFilter {
+                        min_len: Some(min_len),
+                        max_len: Some(7),
+                        min_support: Some(2),
+                        max_order: Some(max_order),
+                        top_k: Some(10),
+                        ..DailyPatternDecisionFilter::default()
+                    },
+                )
+                .expect("local decision report should compute");
+                let metrics = &report.backtest_summary;
+                let score = metrics.top1_accuracy
+                    + 0.25 * metrics.top3_coverage
+                    - 0.05 * metrics.mean_log_loss;
+                println!(
+                    "grid min_len={min_len} max_order={max_order} samples={} top1={:.4} top3={:.4} logloss={:.4} lift_freq_top1={:+.4} lift_freq_top3={:+.4}",
+                    metrics.sample_count,
+                    metrics.top1_accuracy,
+                    metrics.top3_coverage,
+                    metrics.mean_log_loss,
+                    metrics.top1_accuracy - metrics.freq_top1_accuracy,
+                    metrics.top3_coverage - metrics.freq_top3_coverage,
+                );
+                if score > best_score {
+                    best_score = score;
+                    best_report = Some(report);
+                }
+            }
+        }
+        let report = best_report.expect("at least one local report should compute");
+        let metrics = &report.backtest_summary;
+        let shadow = report
+            .shadow_comparison
+            .as_ref()
+            .expect("adaptive_v3_shadow should produce local shadow metrics");
+
+        println!("local events={event_count} days={:?}->{:?} best_report_day={} day_events={}", day_range.0, day_range.1, report.game_day, report.total_events);
+        println!("local interval_signals={}", report.interval_signals.len());
+        for signal in &report.interval_signals {
+            println!(
+                "interval {} target={} n={} base={:.4} obs={:.4} lift={:+.4} confidence={:.4} direction={}",
+                signal.label,
+                signal.target,
+                signal.sample_count,
+                signal.baseline_rate,
+                signal.observed_rate,
+                signal.lift,
+                signal.confidence,
+                signal.direction,
+            );
+        }
+        println!(
+            "local V2: samples={} top1={:.4} top3={:.4} meanP={:.4} logloss={:.4} joint_top1={:.4} joint_top3={:.4} joint_meanP={:.4} joint_logloss={:.4}",
+            metrics.sample_count,
+            metrics.top1_accuracy,
+            metrics.top3_coverage,
+            metrics.mean_true_prob,
+            metrics.mean_log_loss,
+            metrics.joint_top1_accuracy,
+            metrics.joint_top3_coverage,
+            metrics.mean_true_joint_prob,
+            metrics.mean_joint_log_loss,
+        );
+        println!(
+            "local baselines: freq_top1={:.4} freq_top3={:.4} freq_logloss={:.4} random_top1={:.4} random_top3={:.4} random_logloss={:.4}",
+            metrics.freq_top1_accuracy,
+            metrics.freq_top3_coverage,
+            metrics.freq_mean_log_loss,
+            metrics.random_top1_accuracy,
+            metrics.random_top3_coverage,
+            metrics.random_mean_log_loss,
+        );
+        println!(
+            "local V3 shadow: top1={:.4} top3_delta=n/a logloss={:.4} joint_top1={:.4} joint_logloss={:.4}",
+            shadow.shadow_top1_accuracy,
+            shadow.shadow_mean_log_loss,
+            shadow.shadow_joint_top1_accuracy,
+            shadow.shadow_mean_joint_log_loss,
+        );
+        println!(
+            "local lift: V2_top1_vs_freq={:+.4} V2_top1_vs_random={:+.4} V2_logloss_vs_freq={:+.4} V2_logloss_vs_random={:+.4} V3_top1_vs_V2={:+.4} V3_logloss_vs_V2={:+.4} V3_joint_top1_vs_V2={:+.4} V3_joint_logloss_vs_V2={:+.4}",
+            metrics.top1_accuracy - metrics.freq_top1_accuracy,
+            metrics.top1_accuracy - metrics.random_top1_accuracy,
+            metrics.mean_log_loss - metrics.freq_mean_log_loss,
+            metrics.mean_log_loss - metrics.random_mean_log_loss,
+            shadow.shadow_top1_accuracy - shadow.primary_top1_accuracy,
+            shadow.shadow_mean_log_loss - shadow.primary_mean_log_loss,
+            shadow.shadow_joint_top1_accuracy - shadow.primary_joint_top1_accuracy,
+            shadow.shadow_mean_joint_log_loss - shadow.primary_mean_joint_log_loss,
+        );
+        for row in &metrics.benchmarks {
+            println!(
+                "benchmark {} ({}) top1={:.4} top3={:.4} meanP={:.4} logloss={:.4}",
+                row.key,
+                row.label,
+                row.top1_accuracy,
+                row.top3_coverage,
+                row.mean_true_prob,
+                row.mean_log_loss,
+            );
+        }
+    }
 }

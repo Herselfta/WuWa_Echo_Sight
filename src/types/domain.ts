@@ -186,6 +186,10 @@ export interface PatternBlendWeights {
   motifHitBucket: string;
   activeStatBucket: string;
   tierSignalBucket: string;
+  bucketScope: string;
+  bucketSampleCount: number;
+  bucketMinSamples: number;
+  bucketTrust: number;
   base: number;
   markov: number;
   exactMotif: number;
@@ -255,6 +259,20 @@ export interface PatternShadowComparison {
   shadowMeanJointLogLoss: number;
 }
 
+export interface PatternIntervalSignal {
+  key: string;
+  label: string;
+  horizon: number;
+  target: string;
+  sampleCount: number;
+  baselineRate: number;
+  observedRate: number;
+  lift: number;
+  confidence: number;
+  direction: string;
+  note: string;
+}
+
 export interface DailyPatternDecisionReport {
   modelMode: string;
   gameDay: string;
@@ -268,6 +286,7 @@ export interface DailyPatternDecisionReport {
   backtestSummary: PatternBacktestSummary;
   stateSummary?: PatternStateSummary | null;
   shadowComparison?: PatternShadowComparison | null;
+  intervalSignals: PatternIntervalSignal[];
   activeExperts: string[];
   exactPatterns: DailyExactPatternRow[];
   shapePatterns: DailyShapePatternRow[];
